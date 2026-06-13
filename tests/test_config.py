@@ -13,6 +13,7 @@ def test_playwright_args_include_mcp_boundaries(tmp_path: Path) -> None:
         azure_openai_deployment="test-model",
         storage_state_path=tmp_path / "missing.json",
         playwright_allowed_origins=["https://app.example.com"],
+        playwright_headless=True,
     )
 
     args = settings.playwright_args(tmp_path / "output")
@@ -67,6 +68,35 @@ def test_vertex_ai_accepts_adc_configuration() -> None:
     )
 
     assert settings.gemini_use_vertex_ai is True
+
+
+def test_github_copilot_settings_with_explicit_token() -> None:
+    settings = Settings(
+        _env_file=None,
+        model_provider="github_copilot",
+        github_copilot_token="gho_test_token",
+        github_copilot_model="gpt-4.1",
+        github_copilot_use_gh_cli_token=False,
+    )
+
+    assert settings.model_provider == "github_copilot"
+    assert settings.github_copilot_model == "gpt-4.1"
+    assert settings.github_copilot_token is not None
+    assert settings.github_copilot_token.get_secret_value() == "gho_test_token"
+    assert settings.github_copilot_use_gh_cli_token is False
+
+
+def test_github_copilot_requires_token_when_gh_cli_disabled() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="MAF_QA_GITHUB_COPILOT_TOKEN or MAF_QA_GITHUB_COPILOT_USE_GH_CLI_TOKEN=true",
+    ):
+        Settings(
+            _env_file=None,
+            model_provider="github_copilot",
+            github_copilot_model="gpt-4.1",
+            github_copilot_use_gh_cli_token=False,
+        )
 
 
 def test_resilience_and_privacy_defaults(monkeypatch: pytest.MonkeyPatch) -> None:

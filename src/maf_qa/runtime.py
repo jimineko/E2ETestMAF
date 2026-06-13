@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 from types import TracebackType
 from typing import Any
 
 from agent_framework import MCPStdioTool, SupportsChatGetResponse
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.openai import OpenAIChatClient, OpenAIChatCompletionClient
 from agent_framework_gemini import GeminiChatClient
 from azure.identity.aio import DefaultAzureCredential
 
@@ -67,6 +68,12 @@ def build_chat_client(
             project=settings.gemini_vertex_project,
             location=settings.gemini_vertex_location,
         )
+    if settings.model_provider == "github_copilot":
+        return OpenAIChatCompletionClient(
+            model=settings.github_copilot_model,
+            api_key=_resolve_github_copilot_token(settings),
+            base_url=settings.github_copilot_base_url,
+        )
 
     if credential is None:
         raise RuntimeError("Azure OpenAI requires an Azure credential")
@@ -122,7 +129,8 @@ class RuntimeResources:
             checkpoint_root,
             tools=[self.mcp],
             structured_retries=self.settings.structured_output_retries,
-            use_native_response_format=self.settings.model_provider != "gemini",
+            use_native_response_format=self.settings.model_provider
+            not in {"gemini", "github_copilot"},
             interactive=interactive,
         )
 
@@ -211,6 +219,42 @@ def _agent_config_dir(configured: Path) -> Path:
         if packaged.is_dir():
             return packaged
     return configured
+
+
+def _resolve_github_copilot_token(settings: Settings) -> str:
+    if settings.github_copilot_token is not None:
+        explicit = settings.github_copilot_token.get_secret_value().strip()
+        if explicit:
+            return explicit
+    if not settings.github_copilot_use_gh_cli_token:
+        raise RuntimeError(
+            "GitHub Copilot requires MAF_QA_GITHUB_COPILOT_TOKEN or "
+            "MAF_QA_GITHUB_COPILOT_USE_GH_CLI_TOKEN=true"
+        )
+    try:
+        result = subprocess.run(
+            ["gh", "auth", "token"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "GitHub Copilot auth fallback requires gh CLI. Install gh or set "
+            "MAF_QA_GITHUB_COPILOT_TOKEN."
+        ) from exc
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            "Unable to resolve GitHub token from gh auth. Run `gh auth login` or set "
+            "MAF_QA_GITHUB_COPILOT_TOKEN."
+        ) from exc
+    token = result.stdout.strip()
+    if not token:
+        raise RuntimeError(
+            "gh auth token returned an empty token. Re-authenticate with `gh auth login` "
+            "or set MAF_QA_GITHUB_COPILOT_TOKEN."
+        )
+    return token
 
 
 def _sanitize_mcp_function_schemas(tool: MCPStdioTool) -> None:
