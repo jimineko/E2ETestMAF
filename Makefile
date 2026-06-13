@@ -6,7 +6,7 @@ install:
 	npm ci
 
 browsers:
-	npx playwright install chrome
+	npx -y playwright@1.60.0 install chrome
 
 test:
 	.venv/bin/pytest
@@ -19,4 +19,3 @@ typecheck:
 
 run:
 	.venv/bin/python -m maf_qa
-

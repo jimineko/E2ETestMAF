@@ -7,6 +7,9 @@ from azure.identity.aio import DefaultAzureCredential
 from maf_qa.agent_config import load_agent_set
 from maf_qa.config import Settings
 from maf_qa.runtime import build_chat_client
+from maf_qa.runtime import (
+    _strip_json_schema_dialect as strip_json_schema_dialect,
+)
 
 
 async def test_builds_azure_openai_client() -> None:
@@ -42,3 +45,25 @@ async def test_builds_gemini_client() -> None:
     assert client.model == "gemini-2.5-flash-lite"
     agents = load_agent_set(Path("agents"), client, skill_paths=[], model_retries=0)
     assert agents.discovery.client is client  # type: ignore[attr-defined]
+
+
+def test_strip_json_schema_dialect_removes_schema_key_recursively() -> None:
+    schema = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "payload": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "additional_properties": False,
+            }
+        },
+    }
+
+    cleaned = strip_json_schema_dialect(schema)
+
+    assert "$schema" not in cleaned
+    assert "additionalProperties" not in cleaned
+    assert "$schema" not in cleaned["properties"]["payload"]
+    assert "additional_properties" not in cleaned["properties"]["payload"]

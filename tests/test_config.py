@@ -38,7 +38,8 @@ def test_gemini_developer_api_settings() -> None:
     assert settings.gemini_api_key.get_secret_value() == "secret-key"
 
 
-def test_gemini_requires_credentials() -> None:
+def test_gemini_requires_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("MAF_QA_GEMINI_API_KEY", raising=False)
     with pytest.raises(ValidationError, match="MAF_QA_GEMINI_API_KEY"):
         Settings(
             _env_file=None,

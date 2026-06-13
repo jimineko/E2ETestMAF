@@ -5,6 +5,7 @@ from typing import Any, Protocol
 
 from agent_framework import AgentResponse, AgentSession
 from pydantic import BaseModel, ValidationError
+from pydantic_core import ValidationError as CoreValidationError
 
 from maf_qa.middleware import OBSERVABILITY_CONTEXT
 
@@ -31,19 +32,33 @@ async def run_structured[OutputT: BaseModel](
 ) -> OutputT:
     current_prompt = prompt
     current_tools = tools
+    response_format_enabled = True
     for repair_attempt in range(retries + 1):
-        run_kwargs: dict[str, Any] = {
-            "session": session,
-            "options": {"response_format": output_type},
-        }
+        run_kwargs: dict[str, Any] = {"session": session}
+        if response_format_enabled:
+            run_kwargs["options"] = {"response_format": output_type}
         if current_tools is not None:
             run_kwargs["tools"] = current_tools
         token = OBSERVABILITY_CONTEXT.set({"run_id": run_id, "stage": stage, "attempt": attempt})
         try:
-            response: AgentResponse[Any] = await agent.run(  # type: ignore[attr-defined]
-                current_prompt,
-                **run_kwargs,
-            )
+            try:
+                response: AgentResponse[Any] = await agent.run(  # type: ignore[attr-defined]
+                    current_prompt,
+                    **run_kwargs,
+                )
+            except Exception as exc:
+                validation_error = isinstance(exc, (ValidationError, CoreValidationError))
+                if response_format_enabled and (validation_error or _is_response_format_error(exc)):
+                    response_format_enabled = False
+                    retry_kwargs = dict(run_kwargs)
+                    retry_kwargs.pop("options", None)
+                    response = await agent.run(  # type: ignore[attr-defined]
+                        current_prompt,
+                        **retry_kwargs,
+                    )
+                    run_kwargs = retry_kwargs
+                else:
+                    raise
         finally:
             OBSERVABILITY_CONTEXT.reset(token)
         try:
@@ -53,7 +68,7 @@ async def run_structured[OutputT: BaseModel](
             if value is not None:
                 return output_type.model_validate(value)
             return output_type.model_validate_json(_extract_json(response.text))
-        except (ValidationError, ValueError, TypeError) as exc:
+        except (ValidationError, CoreValidationError, ValueError, TypeError) as exc:
             if repair_attempt >= retries:
                 raise StructuredOutputError(
                     f"Agent output could not be validated as {output_type.__name__}"
@@ -65,6 +80,11 @@ async def run_structured[OutputT: BaseModel](
             )
             current_tools = []
     raise AssertionError("unreachable")
+
+
+def _is_response_format_error(exc: BaseException) -> bool:
+    text = str(exc).lower()
+    return "response_format" in text or "response format" in text
 
 
 def _extract_json(text: str) -> str:

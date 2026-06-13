@@ -42,6 +42,21 @@ class InvalidAgent:
         return AgentResponse(value={"wrong": "shape"})
 
 
+class ResponseFormatUnsupportedAgent:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.options: list[dict[str, Any] | None] = []
+
+    async def run(self, messages: str, **kwargs: Any) -> AgentResponse[Any]:
+        del messages
+        self.calls += 1
+        options = kwargs.get("options")
+        self.options.append(options)
+        if options and "response_format" in options:
+            raise TypeError("response_format is not supported")
+        return AgentResponse(value={"answer": "ok"})
+
+
 async def test_structured_output_repairs_without_reusing_tools() -> None:
     agent = RepairAgent()
     result = await run_structured(
@@ -56,6 +71,22 @@ async def test_structured_output_repairs_without_reusing_tools() -> None:
     assert result.answer == "repaired"
     assert agent.tools[0] is not None
     assert agent.tools[1] == []
+
+
+async def test_structured_output_falls_back_when_response_format_is_unsupported() -> None:
+    agent = ResponseFormatUnsupportedAgent()
+    result = await run_structured(
+        agent,  # type: ignore[arg-type]
+        "prompt",
+        Output,
+        AgentSession(),
+        retries=0,
+    )
+
+    assert result.answer == "ok"
+    assert agent.calls == 2
+    assert agent.options[0] is not None
+    assert agent.options[1] is None
 
 
 async def test_structured_output_exhaustion() -> None:

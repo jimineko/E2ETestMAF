@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from types import TracebackType
 from typing import Any
@@ -100,6 +101,7 @@ class RuntimeResources:
 
     async def start(self) -> RuntimeResources:
         await self.mcp.__aenter__()
+        _sanitize_mcp_function_schemas(self.mcp)
         self._mcp_entered = True
         return self
 
@@ -197,3 +199,32 @@ def _agent_config_dir(configured: Path) -> Path:
         if packaged.is_dir():
             return packaged
     return configured
+
+
+def _sanitize_mcp_function_schemas(tool: MCPStdioTool) -> None:
+    for function in tool.functions:
+        original_parameters = function.parameters
+
+        def parameters_without_dialect(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            schema = original_parameters(*args, **kwargs)
+            if isinstance(schema, Mapping):
+                return _strip_json_schema_dialect(dict(schema))
+            return {"type": "object", "properties": {}, "additionalProperties": False}
+
+        function.parameters = parameters_without_dialect  # type: ignore[method-assign]
+
+
+def _strip_json_schema_dialect(schema: dict[str, Any]) -> dict[str, Any]:
+    cleaned: dict[str, Any] = {}
+    for key, value in schema.items():
+        if key in {"$schema", "additionalProperties", "additional_properties"}:
+            continue
+        if isinstance(value, dict):
+            cleaned[key] = _strip_json_schema_dialect(value)
+        elif isinstance(value, list):
+            cleaned[key] = [
+                _strip_json_schema_dialect(item) if isinstance(item, dict) else item for item in value
+            ]
+        else:
+            cleaned[key] = value
+    return cleaned
