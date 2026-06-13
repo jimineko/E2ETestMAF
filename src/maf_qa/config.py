@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import Field, SecretStr, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     objective: str = "Validate the critical user journey and report regressions."
     policies: list[str] = Field(default_factory=list)
     max_refinements: int = Field(default=2, ge=0, le=5)
+    agent_config_dir: Path = Path("agents")
+    skill_paths: Annotated[list[Path], NoDecode] = Field(default_factory=list)
+    model_retries: int = Field(default=2, ge=0, le=5)
+    structured_output_retries: int = Field(default=1, ge=0, le=2)
+    trace_content: bool = False
 
     playwright_command: str = "npx"
     playwright_package: str = "@playwright/mcp"
@@ -49,12 +54,22 @@ class Settings(BaseSettings):
     otlp_endpoint: str | None = None
     applicationinsights_connection_string: str | None = None
     log_level: str = "INFO"
+    devui_host: str = "127.0.0.1"
+    devui_port: int = Field(default=8080, ge=1, le=65535)
+    devui_auth_token: SecretStr | None = None
 
     @field_validator("policies", "playwright_allowed_origins", mode="before")
     @classmethod
     def split_csv(cls, value: object) -> object:
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
+        return value
+
+    @field_validator("skill_paths", mode="before")
+    @classmethod
+    def split_paths(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [Path(item.strip()) for item in value.split(",") if item.strip()]
         return value
 
     @model_validator(mode="after")

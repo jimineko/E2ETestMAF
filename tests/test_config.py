@@ -66,3 +66,17 @@ def test_vertex_ai_accepts_adc_configuration() -> None:
     )
 
     assert settings.gemini_use_vertex_ai is True
+
+
+def test_resilience_and_privacy_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MAF_QA_SKILL_PATHS", "skills/one, skills/two")
+    settings = Settings(
+        _env_file=None,
+        azure_openai_endpoint="https://example.openai.azure.com",
+        azure_openai_deployment="test-model",
+    )
+
+    assert settings.model_retries == 2
+    assert settings.structured_output_retries == 1
+    assert settings.trace_content is False
+    assert settings.skill_paths == [Path("skills/one"), Path("skills/two")]

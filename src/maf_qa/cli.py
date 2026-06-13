@@ -4,10 +4,8 @@ import argparse
 import asyncio
 import sys
 
-from pydantic import ValidationError
-
 from maf_qa.config import Settings
-from maf_qa.models import QARequest
+from maf_qa.models import LiteralStatus, QARequest
 from maf_qa.runtime import execute
 from maf_qa.telemetry import configure_telemetry
 
@@ -36,21 +34,21 @@ async def _run(args: argparse.Namespace) -> int:
         objective=args.objective or settings.objective,
         policies=args.policy or settings.policies,
         max_refinements=(
-            args.max_refinements
-            if args.max_refinements is not None
-            else settings.max_refinements
+            args.max_refinements if args.max_refinements is not None else settings.max_refinements
         ),
     )
     configure_telemetry(settings)
     report = await execute(settings, request)
     print(report.model_dump_json(indent=2))
+    if report.status == LiteralStatus.BLOCKED:
+        return 3
     return 0 if report.passed else 2
 
 
 def main() -> None:
     try:
         exit_code = asyncio.run(_run(build_parser().parse_args()))
-    except (ValidationError, ValueError, RuntimeError) as exc:
+    except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
     raise SystemExit(exit_code)

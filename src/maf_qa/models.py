@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import Any, Literal
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -19,6 +20,7 @@ class Severity(StrEnum):
 class Decision(StrEnum):
     RETRY = "retry"
     COMPLETE = "complete"
+    ESCALATE = "escalate"
 
 
 class QARequest(BaseModel):
@@ -43,6 +45,27 @@ class RunContext(BaseModel):
     started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
+class FailureKind(StrEnum):
+    MODEL_TRANSIENT = "model_transient"
+    MODEL_PERMANENT = "model_permanent"
+    STRUCTURED_OUTPUT = "structured_output"
+    PLAYWRIGHT = "playwright"
+    CONFIGURATION = "configuration"
+    UNKNOWN = "unknown"
+
+
+class StageFailure(BaseModel):
+    run: RunContext
+    stage: str
+    attempt: int = Field(ge=1)
+    kind: FailureKind
+    exception_type: str
+    message: str
+    retryable: bool = False
+    input_type: str
+    stage_input: dict[str, Any]
+
+
 class PageObservation(BaseModel):
     url: str
     title: str = ""
@@ -60,6 +83,7 @@ class DiscoveryFindings(BaseModel):
 class DiscoveryReport(BaseModel):
     run: RunContext
     findings: DiscoveryFindings
+    review_history: list[HumanReviewResponse] = Field(default_factory=list)
 
 
 class TestScenario(BaseModel):
@@ -80,6 +104,7 @@ class TestPlan(BaseModel):
     generated: GeneratedPlan
     attempt: int = Field(default=1, ge=1)
     refinement_instruction: str | None = None
+    review_history: list[HumanReviewResponse] = Field(default_factory=list)
 
 
 class LiteralStatus(StrEnum):
@@ -120,6 +145,7 @@ class JudgeOutput(BaseModel):
     score: int = Field(ge=0, le=100)
     policy_results: list[PolicyResult] = Field(default_factory=list)
     defects: list[str] = Field(default_factory=list)
+    rationale: str
     retry_advice: str | None = None
 
 
@@ -147,21 +173,52 @@ class SafetyAssessment(BaseModel):
 
 
 class NextAction(BaseModel):
-    plan: TestPlan
-    quality: QualityAssessment
-    safety: SafetyAssessment
+    run: RunContext
+    plan: TestPlan | None = None
+    quality: QualityAssessment | None = None
+    safety: SafetyAssessment | None = None
     decision: Decision
     retry_instruction: str | None = None
+    failure: StageFailure | None = None
+    review_history: list[HumanReviewResponse] = Field(default_factory=list)
+
+
+def _default_review_actions() -> list[Literal["retry", "abort"]]:
+    return ["retry", "abort"]
+
+
+class HumanReviewRequest(BaseModel):
+    run_id: str
+    stage: str
+    reason: str
+    allowed_actions: list[Literal["retry", "abort"]] = Field(
+        default_factory=_default_review_actions
+    )
+
+
+class HumanReviewResponse(BaseModel):
+    action: Literal["retry", "abort"]
+    note: str | None = None
+
+
+class StageRetry(BaseModel):
+    stage: str
+    input_type: str
+    stage_input: dict[str, Any]
+    review_history: list[HumanReviewResponse] = Field(default_factory=list)
 
 
 class QAReport(BaseModel):
     run_id: str
     target_url: str
+    status: LiteralStatus
     passed: bool
     score: int
     attempts: int
     summary: str
     policy_results: list[PolicyResult]
     security_findings: list[SecurityFinding]
+    failures: list[StageFailure] = Field(default_factory=list)
+    review_history: list[HumanReviewResponse] = Field(default_factory=list)
     artifact_uris: list[str] = Field(default_factory=list)
     completed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
