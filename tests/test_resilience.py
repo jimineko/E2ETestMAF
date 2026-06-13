@@ -22,6 +22,10 @@ class Output(BaseModel):
     answer: str
 
 
+class ListOutput(BaseModel):
+    scenarios: list[dict[str, Any]]
+
+
 class RepairAgent:
     def __init__(self) -> None:
         self.calls = 0
@@ -40,6 +44,12 @@ class InvalidAgent:
     async def run(self, messages: str, **kwargs: Any) -> AgentResponse[Any]:
         del messages, kwargs
         return AgentResponse(value={"wrong": "shape"})
+
+
+class ListOnlyAgent:
+    async def run(self, messages: str, **kwargs: Any) -> AgentResponse[Any]:
+        del messages, kwargs
+        return AgentResponse(value=[{"name": "smoke"}])
 
 
 class ResponseFormatUnsupportedAgent:
@@ -100,10 +110,28 @@ async def test_structured_output_exhaustion() -> None:
         )
 
 
+async def test_structured_output_coerces_list_to_required_list_field() -> None:
+    result = await run_structured(
+        ListOnlyAgent(),  # type: ignore[arg-type]
+        "prompt",
+        ListOutput,
+        AgentSession(),
+        retries=0,
+    )
+
+    assert result.scenarios == [{"name": "smoke"}]
+
+
 class HttpError(Exception):
     def __init__(self, status_code: int) -> None:
         self.status_code = status_code
         super().__init__(f"HTTP {status_code}")
+
+
+class QuotaHttpError(HttpError):
+    def __init__(self) -> None:
+        super().__init__(429)
+        self.args = ("quota exceeded",)
 
 
 async def test_chat_middleware_retries_transient_errors(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -137,6 +165,19 @@ async def test_chat_middleware_does_not_retry_permanent_errors() -> None:
         await middleware.process(ChatContext(object(), [], {}), call_next)  # type: ignore[arg-type]
     assert attempts == 1
 
+
+async def test_chat_middleware_does_not_retry_quota_exhausted_errors() -> None:
+    attempts = 0
+
+    async def call_next() -> None:
+        nonlocal attempts
+        attempts += 1
+        raise QuotaHttpError()
+
+    middleware = ChatRetryMiddleware(stage="judge", max_retries=2)
+    with pytest.raises(QuotaHttpError):
+        await middleware.process(ChatContext(object(), [], {}), call_next)  # type: ignore[arg-type]
+    assert attempts == 1
 
 async def test_tool_middleware_observes_without_retrying() -> None:
     attempts = 0

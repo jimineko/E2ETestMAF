@@ -110,6 +110,7 @@ class RuntimeResources:
             self.agents,
             checkpoint_root,
             tools=[self.mcp],
+            enable_discovery_tools=self.settings.model_provider != "gemini",
             structured_retries=self.settings.structured_output_retries,
             interactive=interactive,
         )

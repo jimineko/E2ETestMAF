@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Protocol
+from typing import Any, Protocol, get_origin
 
 from agent_framework import AgentResponse, AgentSession
 from pydantic import BaseModel, ValidationError
@@ -66,7 +66,13 @@ async def run_structured[OutputT: BaseModel](
             if isinstance(value, output_type):
                 return value
             if value is not None:
-                return output_type.model_validate(value)
+                try:
+                    return output_type.model_validate(value)
+                except (ValidationError, CoreValidationError):
+                    coerced = _coerce_list_payload(output_type, value)
+                    if coerced is not None:
+                        return output_type.model_validate(coerced)
+                    raise
             return output_type.model_validate_json(_extract_json(response.text))
         except (ValidationError, CoreValidationError, ValueError, TypeError) as exc:
             if repair_attempt >= retries:
@@ -98,3 +104,18 @@ def _extract_json(text: str) -> str:
     except json.JSONDecodeError as exc:
         raise ValueError("Agent did not return valid structured JSON") from exc
     return stripped
+
+
+def _coerce_list_payload[OutputT: BaseModel](
+    output_type: type[OutputT], value: object
+) -> dict[str, Any] | None:
+    if not isinstance(value, list):
+        return None
+    required_fields = [name for name, field in output_type.model_fields.items() if field.is_required()]
+    if len(required_fields) != 1:
+        return None
+    target = required_fields[0]
+    annotation = output_type.model_fields[target].annotation
+    if get_origin(annotation) is not list:
+        return None
+    return {target: value}

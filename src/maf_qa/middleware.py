@@ -37,14 +37,24 @@ def exception_status_code(exc: BaseException) -> int | None:
 
 
 def is_transient_error(exc: BaseException) -> bool:
+    if is_quota_error(exc):
+        return False
     if isinstance(exc, (TimeoutError, asyncio.TimeoutError, ConnectionError)):
         return True
     return exception_status_code(exc) in TRANSIENT_STATUS_CODES
 
 
+def is_quota_error(exc: BaseException) -> bool:
+    status = exception_status_code(exc)
+    text = str(exc).lower()
+    return status == 429 and ("quota" in text or "resource_exhausted" in text)
+
+
 def classify_failure(exc: BaseException, *, stage: str) -> FailureKind:
     if exc.__class__.__name__ == "StructuredOutputError":
         return FailureKind.STRUCTURED_OUTPUT
+    if is_quota_error(exc):
+        return FailureKind.MODEL_PERMANENT
     if stage == "browser" and not is_transient_error(exc):
         return FailureKind.PLAYWRIGHT
     if is_transient_error(exc):

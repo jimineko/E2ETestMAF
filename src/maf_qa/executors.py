@@ -4,7 +4,7 @@ from agent_framework import AgentSession, Executor, WorkflowContext, handler, re
 from pydantic import BaseModel
 
 from maf_qa.agents import AgentRunner, run_structured
-from maf_qa.middleware import classify_failure, is_transient_error
+from maf_qa.middleware import classify_failure, exception_status_code, is_quota_error, is_transient_error
 from maf_qa.models import (
     BrowserRunOutput,
     Decision,
@@ -466,7 +466,9 @@ class FinalizerExecutor(Executor):
 
 
 def _safe_exception_message(exc: Exception) -> str:
-    status = getattr(exc, "status_code", None)
+    if is_quota_error(exc):
+        return f"{type(exc).__name__} (quota_exceeded)"
+    status = exception_status_code(exc)
     suffix = f" (status={status})" if isinstance(status, int) else ""
     return f"{type(exc).__name__}{suffix}"
 

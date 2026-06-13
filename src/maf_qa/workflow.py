@@ -68,12 +68,16 @@ def build_qa_workflow(
     checkpoint_root: Path,
     *,
     tools: list[Any] | None = None,
+    enable_discovery_tools: bool = True,
     structured_retries: int = 1,
     interactive: bool = False,
 ) -> Workflow:
     orchestrator = OrchestratorExecutor()
     discovery = DiscoveryExecutor(
-        "discovery", agents.discovery, structured_retries=structured_retries, tools=tools
+        "discovery",
+        agents.discovery,
+        structured_retries=structured_retries,
+        tools=tools if enable_discovery_tools else None,
     )
     generator = GeneratorExecutor(
         "generator", agents.generator, structured_retries=structured_retries
