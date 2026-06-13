@@ -40,6 +40,10 @@ make test
 make run
 ```
 
+ローカル環境は `venv + pip` ではなく `uv` 管理に統一しています。`.python-version`
+で指定した Python 3.14 系の仮想環境を `uv sync` で作成し、Python 依存関係は
+`pyproject.toml` を正として解決します。
+
 Azure OpenAIを使う場合は事前に `az login`、Vertex AIのADCを使う場合は `gcloud auth application-default login` を実行します。Gemini Developer APIのAPIキー認証では、どちらのCLIログインも不要です。
 
 ### Agent設定とSkills
@@ -53,8 +57,8 @@ Azure OpenAIを使う場合は事前に `az login`、Vertex AIのADCを使う場
 DevUIはローカル調査専用です。Bearer認証付きでloopbackへ起動し、既定ではプロンプトや応答本文をOpenTelemetryへ記録しません。
 
 ```bash
-.venv/bin/pip install -e '.[devui]'
-MAF_QA_DEVUI_AUTH_TOKEN=change-me .venv/bin/maf-qa-devui
+uv sync --extra devui --group dev
+MAF_QA_DEVUI_AUTH_TOKEN=change-me uv run maf-qa-devui
 ```
 
 DevUIでESCALATEした実行は人間の `retry` または `abort` 応答まで停止します。本番のbatch/ACA Jobでは同じ状態を`blocked`レポートと終了コード3へ変換します。
@@ -90,7 +94,7 @@ MAF_QA_GEMINI_VERTEX_LOCATION=global
 CLI引数でも対象を指定できます。
 
 ```bash
-.venv/bin/maf-qa \
+uv run maf-qa \
   --model-provider gemini \
   --target-url https://example.com \
   --objective "主要導線を検証する" \

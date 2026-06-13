@@ -7,7 +7,7 @@ name = "maf-playwright-qa"
 version = "0.1.0"
 description = "Autonomous web QA workflow built with Microsoft Agent Framework and Playwright MCP"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.14,<3.15"
 dependencies = [
   "agent-framework-core==1.8.1",
   "agent-framework-declarative==1.0.0b260528",
@@ -25,6 +25,8 @@ dependencies = [
 [project.optional-dependencies]
 azure-monitor = ["azure-monitor-opentelemetry-exporter>=1.0.0b45"]
 devui = ["agent-framework-devui==1.0.0b260528"]
+
+[dependency-groups]
 dev = [
   "mypy>=2.1,<3",
   "pytest>=9,<10",
@@ -49,12 +51,12 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py314"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.14"
 strict = true
 packages = ["maf_qa"]

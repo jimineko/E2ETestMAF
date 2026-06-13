@@ -1,4 +1,6 @@
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 from agent_framework.openai import OpenAIChatClient
 from agent_framework_gemini import GeminiChatClient
@@ -6,10 +8,13 @@ from azure.identity.aio import DefaultAzureCredential
 
 from maf_qa.agent_config import load_agent_set
 from maf_qa.config import Settings
-from maf_qa.runtime import build_chat_client
+from maf_qa.runtime import (
+    _sanitize_mcp_function_schemas as sanitize_mcp_function_schemas,
+)
 from maf_qa.runtime import (
     _strip_json_schema_dialect as strip_json_schema_dialect,
 )
+from maf_qa.runtime import build_chat_client
 
 
 async def test_builds_azure_openai_client() -> None:
@@ -67,3 +72,48 @@ def test_strip_json_schema_dialect_removes_schema_key_recursively() -> None:
     assert "additionalProperties" not in cleaned
     assert "$schema" not in cleaned["properties"]["payload"]
     assert "additional_properties" not in cleaned["properties"]["payload"]
+
+
+def test_sanitize_mcp_function_schemas_keeps_each_function_schema() -> None:
+    first_schema = {
+        "type": "object",
+        "properties": {"first": {"type": "string"}},
+        "required": ["first"],
+    }
+    second_schema = {
+        "type": "object",
+        "properties": {"second": {"type": "string"}},
+        "required": ["second"],
+    }
+    tool = SimpleNamespace(
+        functions=[
+            SimpleNamespace(parameters=lambda: first_schema),
+            SimpleNamespace(parameters=lambda: second_schema),
+        ]
+    )
+
+    sanitize_mcp_function_schemas(tool)  # type: ignore[arg-type]
+
+    assert tool.functions[0].parameters()["required"] == ["first"]
+    assert tool.functions[1].parameters()["required"] == ["second"]
+
+
+def test_sanitize_mcp_function_schemas_preserves_browser_navigate_url() -> None:
+    schema: dict[str, Any] = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "url": {"type": "string", "description": "The URL to navigate to."}
+        },
+        "required": ["url"],
+    }
+    tool = SimpleNamespace(functions=[SimpleNamespace(parameters=lambda: schema)])
+
+    sanitize_mcp_function_schemas(tool)  # type: ignore[arg-type]
+    cleaned = tool.functions[0].parameters()
+
+    assert "$schema" not in cleaned
+    assert "additionalProperties" not in cleaned
+    assert cleaned["properties"]["url"]["type"] == "string"
+    assert cleaned["required"] == ["url"]

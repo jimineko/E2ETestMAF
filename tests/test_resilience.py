@@ -15,6 +15,8 @@ from maf_qa.middleware import (
     OBSERVABILITY_CONTEXT,
     ChatRetryMiddleware,
     ToolTelemetryMiddleware,
+    exception_status_code,
+    is_quota_error,
 )
 
 
@@ -85,18 +87,30 @@ async def test_structured_output_repairs_without_reusing_tools() -> None:
 
 async def test_structured_output_falls_back_when_response_format_is_unsupported() -> None:
     agent = ResponseFormatUnsupportedAgent()
+    with pytest.raises(TypeError):
+        await run_structured(
+            agent,  # type: ignore[arg-type]
+            "prompt",
+            Output,
+            AgentSession(),
+            retries=0,
+        )
+
+
+async def test_structured_output_uses_prompt_schema_without_native_response_format() -> None:
+    agent = ResponseFormatUnsupportedAgent()
     result = await run_structured(
         agent,  # type: ignore[arg-type]
         "prompt",
         Output,
         AgentSession(),
         retries=0,
+        use_native_response_format=False,
     )
 
     assert result.answer == "ok"
-    assert agent.calls == 2
-    assert agent.options[0] is not None
-    assert agent.options[1] is None
+    assert agent.calls == 1
+    assert agent.options == [None]
 
 
 async def test_structured_output_exhaustion() -> None:
@@ -134,6 +148,18 @@ class QuotaHttpError(HttpError):
         self.args = ("quota exceeded",)
 
 
+class GeminiLikeQuotaError(Exception):
+    def __init__(self) -> None:
+        self.details = {
+            "error": {
+                "code": 429,
+                "status": "RESOURCE_EXHAUSTED",
+                "message": "Free tier request quota exceeded.",
+            }
+        }
+        super().__init__("RESOURCE_EXHAUSTED")
+
+
 async def test_chat_middleware_retries_transient_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     attempts = 0
 
@@ -166,6 +192,7 @@ async def test_chat_middleware_does_not_retry_permanent_errors() -> None:
     assert attempts == 1
 
 
+
 async def test_chat_middleware_does_not_retry_quota_exhausted_errors() -> None:
     attempts = 0
 
@@ -178,6 +205,13 @@ async def test_chat_middleware_does_not_retry_quota_exhausted_errors() -> None:
     with pytest.raises(QuotaHttpError):
         await middleware.process(ChatContext(object(), [], {}), call_next)  # type: ignore[arg-type]
     assert attempts == 1
+
+
+def test_quota_detection_reads_gemini_like_details() -> None:
+    exc = GeminiLikeQuotaError()
+
+    assert exception_status_code(exc) == 429
+    assert is_quota_error(exc) is True
 
 async def test_tool_middleware_observes_without_retrying() -> None:
     attempts = 0

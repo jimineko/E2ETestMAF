@@ -26,13 +26,28 @@ OBSERVABILITY_CONTEXT: ContextVar[dict[str, Any] | None] = ContextVar(
 
 
 def exception_status_code(exc: BaseException) -> int | None:
-    for candidate in (exc, getattr(exc, "response", None)):
+    for candidate in (exc, getattr(exc, "response", None), getattr(exc, "details", None)):
         value = getattr(candidate, "status_code", None)
+        if isinstance(value, int):
+            return value
+        value = getattr(candidate, "code", None)
         if isinstance(value, int):
             return value
         value = getattr(candidate, "status", None)
         if isinstance(value, int):
             return value
+        if isinstance(candidate, dict):
+            value = candidate.get("code")
+            if isinstance(value, int):
+                return value
+            error = candidate.get("error")
+            if isinstance(error, dict) and isinstance(error.get("code"), int):
+                return int(error["code"])
+    for chained in (getattr(exc, "__cause__", None), getattr(exc, "__context__", None)):
+        if chained is not None:
+            status = exception_status_code(chained)
+            if status is not None:
+                return status
     return None
 
 
@@ -46,7 +61,7 @@ def is_transient_error(exc: BaseException) -> bool:
 
 def is_quota_error(exc: BaseException) -> bool:
     status = exception_status_code(exc)
-    text = str(exc).lower()
+    text = _safe_exception_text(exc)
     return status == 429 and ("quota" in text or "resource_exhausted" in text)
 
 
@@ -54,7 +69,7 @@ def classify_failure(exc: BaseException, *, stage: str) -> FailureKind:
     if exc.__class__.__name__ == "StructuredOutputError":
         return FailureKind.STRUCTURED_OUTPUT
     if is_quota_error(exc):
-        return FailureKind.MODEL_PERMANENT
+        return FailureKind.MODEL_QUOTA
     if stage == "browser" and not is_transient_error(exc):
         return FailureKind.PLAYWRIGHT
     if is_transient_error(exc):
@@ -64,6 +79,18 @@ def classify_failure(exc: BaseException, *, stage: str) -> FailureKind:
     if status in {400, 401, 403, 404, 422} or "content_filter" in text:
         return FailureKind.MODEL_PERMANENT
     return FailureKind.UNKNOWN
+
+
+def _safe_exception_text(exc: BaseException) -> str:
+    parts = [str(exc).lower()]
+    for attr in ("message", "status", "details"):
+        value = getattr(exc, attr, None)
+        if value is not None:
+            parts.append(str(value).lower())
+    for chained in (getattr(exc, "__cause__", None), getattr(exc, "__context__", None)):
+        if chained is not None:
+            parts.append(_safe_exception_text(chained))
+    return " ".join(parts)
 
 
 class ChatRetryMiddleware(ChatMiddleware):

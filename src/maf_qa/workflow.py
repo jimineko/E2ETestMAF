@@ -68,8 +68,8 @@ def build_qa_workflow(
     checkpoint_root: Path,
     *,
     tools: list[Any] | None = None,
-    enable_discovery_tools: bool = True,
     structured_retries: int = 1,
+    use_native_response_format: bool = True,
     interactive: bool = False,
 ) -> Workflow:
     orchestrator = OrchestratorExecutor()
@@ -77,16 +77,34 @@ def build_qa_workflow(
         "discovery",
         agents.discovery,
         structured_retries=structured_retries,
-        tools=tools if enable_discovery_tools else None,
+        tools=tools,
+        use_native_response_format=use_native_response_format,
     )
     generator = GeneratorExecutor(
-        "generator", agents.generator, structured_retries=structured_retries
+        "generator",
+        agents.generator,
+        structured_retries=structured_retries,
+        use_native_response_format=use_native_response_format,
     )
     browser = BrowserExecutor(
-        "browser", agents.browser, structured_retries=structured_retries, tools=tools
+        "browser",
+        agents.browser,
+        structured_retries=structured_retries,
+        tools=tools,
+        use_native_response_format=use_native_response_format,
     )
-    judge = JudgeExecutor("judge", agents.judge, structured_retries=structured_retries)
-    safety = SafetyExecutor("safety", agents.safety, structured_retries=structured_retries)
+    judge = JudgeExecutor(
+        "judge",
+        agents.judge,
+        structured_retries=structured_retries,
+        use_native_response_format=use_native_response_format,
+    )
+    safety = SafetyExecutor(
+        "safety",
+        agents.safety,
+        structured_retries=structured_retries,
+        use_native_response_format=use_native_response_format,
+    )
     decision = DecisionExecutor()
     finalizer = FinalizerExecutor()
 

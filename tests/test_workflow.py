@@ -32,6 +32,8 @@ class FakeAgent:
         self.outputs = outputs
         self.calls = 0
         self.session_ids: list[str | None] = []
+        self.tool_calls: list[list[Any] | None] = []
+        self.option_calls: list[dict[str, Any] | None] = []
 
     def create_session(self, *, session_id: str | None = None) -> AgentSession:
         return AgentSession(session_id=session_id)
@@ -44,7 +46,9 @@ class FakeAgent:
         options: dict[str, Any] | None = None,
         tools: list[Any] | None = None,
     ) -> AgentResponse[Any]:
-        del messages, options, tools
+        del messages
+        self.tool_calls.append(tools)
+        self.option_calls.append(options)
         self.session_ids.append(session.session_id if session is not None else None)
         output = self.outputs[min(self.calls, len(self.outputs) - 1)]
         self.calls += 1
@@ -198,6 +202,33 @@ async def test_stage_failure_produces_blocked_report(tmp_path: Path) -> None:
     assert report.status == LiteralStatus.BLOCKED
     assert report.failures[0].exception_type == "TimeoutError"
     assert "provider timed out" not in report.failures[0].message
+
+
+async def test_gemini_mode_keeps_discovery_tools_without_native_response_format(
+    tmp_path: Path,
+) -> None:
+    agents = _basic_agents()
+    tool = object()
+    workflow = build_qa_workflow(
+        agents,
+        tmp_path / "checkpoints",
+        tools=[tool],
+        use_native_response_format=False,
+    )
+
+    result = await workflow.run(QARequest(target_url="https://example.com", objective="Validate"))
+
+    report = result.get_outputs()[0]
+    assert isinstance(report, QAReport)
+    assert report.status == LiteralStatus.PASSED
+    discovery = agents.discovery
+    browser = agents.browser
+    assert isinstance(discovery, FakeAgent)
+    assert isinstance(browser, FakeAgent)
+    assert discovery.tool_calls[0] == [tool]
+    assert browser.tool_calls[0] == [tool]
+    assert discovery.option_calls[0] is None
+    assert browser.option_calls[0] is None
 
 
 async def test_devui_human_abort_resumes_to_blocked_report(tmp_path: Path) -> None:

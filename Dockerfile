@@ -1,7 +1,11 @@
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 ENV DEBIAN_FRONTEND=noninteractive \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    UV_LINK_MODE=copy \
+    PATH="/app/.venv/bin:$PATH"
+
+COPY --from=ghcr.io/astral-sh/uv:0.7.22 /uv /uvx /usr/local/bin/
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends nodejs npm \
@@ -17,8 +21,8 @@ COPY pyproject.toml README.md ./
 COPY src ./src
 COPY agents ./agents
 COPY skills ./skills
-RUN pip install --no-cache-dir '.[azure-monitor]'
+RUN uv sync --no-dev --extra azure-monitor
 
 RUN mkdir -p /app/artifacts /app/checkpoints /app/auth
 
-CMD ["python", "-m", "maf_qa"]
+CMD ["maf-qa"]
