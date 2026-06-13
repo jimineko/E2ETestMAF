@@ -4,7 +4,12 @@ from agent_framework import AgentSession, Executor, WorkflowContext, handler, re
 from pydantic import BaseModel
 
 from maf_qa.agents import AgentRunner, run_structured
-from maf_qa.middleware import classify_failure, exception_status_code, is_quota_error, is_transient_error
+from maf_qa.middleware import (
+    classify_failure,
+    exception_status_code,
+    is_quota_error,
+    is_transient_error,
+)
 from maf_qa.models import (
     BrowserRunOutput,
     Decision,
@@ -38,10 +43,12 @@ class SessionExecutor(Executor):
         *,
         structured_retries: int,
         tools: list[Any] | None = None,
+        use_native_response_format: bool = True,
     ) -> None:
         self.agent = agent
         self.structured_retries = structured_retries
         self.tools = tools
+        self.use_native_response_format = use_native_response_format
         self.sessions: dict[str, AgentSession] = {}
         super().__init__(id=executor_id)
 
@@ -124,6 +131,7 @@ Return the discovered pages, user flows, authentication requirement, and risks.
                 run_id=run.run_id,
                 stage=self.id,
                 attempt=1,
+                use_native_response_format=self.use_native_response_format,
             )
             await ctx.send_message(
                 DiscoveryReport(run=run, findings=findings, review_history=review_history)
@@ -178,6 +186,7 @@ Refinement instruction: {refinement or "None; create the initial plan."}
                 run_id=discovery.run.run_id,
                 stage=self.id,
                 attempt=attempt,
+                use_native_response_format=self.use_native_response_format,
             )
             await ctx.send_message(
                 TestPlan(
@@ -220,6 +229,7 @@ Return step-level evidence and all observed errors. Start and stop Playwright tr
                 run_id=plan.discovery.run.run_id,
                 stage=self.id,
                 attempt=plan.attempt,
+                use_native_response_format=self.use_native_response_format,
             )
             await ctx.send_message(ExecutionResult(plan=plan, output=output))
         except Exception as exc:
@@ -255,6 +265,7 @@ Return a concise evidence-based rationale, not hidden chain-of-thought.
                 run_id=execution.plan.discovery.run.run_id,
                 stage=self.id,
                 attempt=execution.plan.attempt,
+                use_native_response_format=self.use_native_response_format,
             )
             await ctx.send_message(QualityAssessment(execution=execution, result=result))
         except Exception as exc:
@@ -289,6 +300,7 @@ Evidence: {execution.output.model_dump_json()}
                 run_id=execution.plan.discovery.run.run_id,
                 stage=self.id,
                 attempt=execution.plan.attempt,
+                use_native_response_format=self.use_native_response_format,
             )
             await ctx.send_message(SafetyAssessment(execution=execution, result=result))
         except Exception as exc:

@@ -29,36 +29,24 @@ async def run_structured[OutputT: BaseModel](
     run_id: str = "unknown",
     stage: str = "unknown",
     attempt: int = 1,
+    use_native_response_format: bool = True,
 ) -> OutputT:
     current_prompt = prompt
     current_tools = tools
-    response_format_enabled = True
     for repair_attempt in range(retries + 1):
         run_kwargs: dict[str, Any] = {"session": session}
-        if response_format_enabled:
+        if use_native_response_format:
             run_kwargs["options"] = {"response_format": output_type}
         if current_tools is not None:
             run_kwargs["tools"] = current_tools
         token = OBSERVABILITY_CONTEXT.set({"run_id": run_id, "stage": stage, "attempt": attempt})
         try:
-            try:
-                response: AgentResponse[Any] = await agent.run(  # type: ignore[attr-defined]
-                    current_prompt,
-                    **run_kwargs,
-                )
-            except Exception as exc:
-                validation_error = isinstance(exc, (ValidationError, CoreValidationError))
-                if response_format_enabled and (validation_error or _is_response_format_error(exc)):
-                    response_format_enabled = False
-                    retry_kwargs = dict(run_kwargs)
-                    retry_kwargs.pop("options", None)
-                    response = await agent.run(  # type: ignore[attr-defined]
-                        current_prompt,
-                        **retry_kwargs,
-                    )
-                    run_kwargs = retry_kwargs
-                else:
-                    raise
+            response: AgentResponse[Any] = await agent.run(  # type: ignore[attr-defined]
+                _with_json_contract(current_prompt, output_type)
+                if not use_native_response_format
+                else current_prompt,
+                **run_kwargs,
+            )
         finally:
             OBSERVABILITY_CONTEXT.reset(token)
         try:
@@ -88,9 +76,12 @@ async def run_structured[OutputT: BaseModel](
     raise AssertionError("unreachable")
 
 
-def _is_response_format_error(exc: BaseException) -> bool:
-    text = str(exc).lower()
-    return "response_format" in text or "response format" in text
+def _with_json_contract[OutputT: BaseModel](prompt: str, output_type: type[OutputT]) -> str:
+    return (
+        f"{prompt}\n\n"
+        "Return only valid JSON that matches this JSON Schema. Do not include markdown.\n"
+        f"Schema: {output_type.model_json_schema()}"
+    )
 
 
 def _extract_json(text: str) -> str:
@@ -111,7 +102,9 @@ def _coerce_list_payload[OutputT: BaseModel](
 ) -> dict[str, Any] | None:
     if not isinstance(value, list):
         return None
-    required_fields = [name for name, field in output_type.model_fields.items() if field.is_required()]
+    required_fields = [
+        name for name, field in output_type.model_fields.items() if field.is_required()
+    ]
     if len(required_fields) != 1:
         return None
     target = required_fields[0]

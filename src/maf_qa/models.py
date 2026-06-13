@@ -47,6 +47,7 @@ class RunContext(BaseModel):
 
 class FailureKind(StrEnum):
     MODEL_TRANSIENT = "model_transient"
+    MODEL_QUOTA = "model_quota"
     MODEL_PERMANENT = "model_permanent"
     STRUCTURED_OUTPUT = "structured_output"
     PLAYWRIGHT = "playwright"

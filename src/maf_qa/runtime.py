@@ -43,6 +43,13 @@ PLAYWRIGHT_ALLOWED_TOOLS = {
 }
 
 
+class GeminiCompatibleMCPStdioTool(MCPStdioTool):
+    async def __aenter__(self) -> GeminiCompatibleMCPStdioTool:
+        await super().__aenter__()
+        _sanitize_mcp_function_schemas(self)
+        return self
+
+
 def build_chat_client(
     settings: Settings,
     credential: DefaultAzureCredential | None,
@@ -83,7 +90,12 @@ class RuntimeResources:
         )
         self.credential = DefaultAzureCredential() if needs_azure_credential else None
         self.client = build_chat_client(settings, self.credential)
-        self.mcp = MCPStdioTool(
+        tool_class = (
+            GeminiCompatibleMCPStdioTool
+            if settings.model_provider == "gemini"
+            else MCPStdioTool
+        )
+        self.mcp = tool_class(
             name="playwright",
             command=settings.playwright_command,
             args=settings.playwright_args(self.playwright_dir),
@@ -101,7 +113,6 @@ class RuntimeResources:
 
     async def start(self) -> RuntimeResources:
         await self.mcp.__aenter__()
-        _sanitize_mcp_function_schemas(self.mcp)
         self._mcp_entered = True
         return self
 
@@ -110,8 +121,8 @@ class RuntimeResources:
             self.agents,
             checkpoint_root,
             tools=[self.mcp],
-            enable_discovery_tools=self.settings.model_provider != "gemini",
             structured_retries=self.settings.structured_output_retries,
+            use_native_response_format=self.settings.model_provider != "gemini",
             interactive=interactive,
         )
 
@@ -204,15 +215,22 @@ def _agent_config_dir(configured: Path) -> Path:
 
 def _sanitize_mcp_function_schemas(tool: MCPStdioTool) -> None:
     for function in tool.functions:
-        original_parameters = function.parameters
+        function.parameters = _sanitized_parameters_factory(  # type: ignore[method-assign]
+            function.parameters
+        )
 
-        def parameters_without_dialect(*args: Any, **kwargs: Any) -> dict[str, Any]:
-            schema = original_parameters(*args, **kwargs)
-            if isinstance(schema, Mapping):
-                return _strip_json_schema_dialect(dict(schema))
-            return {"type": "object", "properties": {}, "additionalProperties": False}
 
-        function.parameters = parameters_without_dialect  # type: ignore[method-assign]
+def _sanitized_parameters_factory(original_parameters: Any) -> Any:
+    def parameters_without_dialect(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        schema = original_parameters(*args, **kwargs)
+        if not isinstance(schema, Mapping):
+            raise ValueError("MCP function parameters must be a JSON schema mapping")
+        cleaned = _strip_json_schema_dialect(dict(schema))
+        if not cleaned or cleaned.get("type") != "object":
+            raise ValueError("MCP function parameters must remain an object schema")
+        return cleaned
+
+    return parameters_without_dialect
 
 
 def _strip_json_schema_dialect(schema: dict[str, Any]) -> dict[str, Any]:
@@ -224,7 +242,8 @@ def _strip_json_schema_dialect(schema: dict[str, Any]) -> dict[str, Any]:
             cleaned[key] = _strip_json_schema_dialect(value)
         elif isinstance(value, list):
             cleaned[key] = [
-                _strip_json_schema_dialect(item) if isinstance(item, dict) else item for item in value
+                _strip_json_schema_dialect(item) if isinstance(item, dict) else item
+                for item in value
             ]
         else:
             cleaned[key] = value

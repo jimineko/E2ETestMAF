@@ -1,21 +1,27 @@
-.PHONY: install browsers test lint typecheck run
+.PHONY: install browsers test lint typecheck run build upgrade
 
 install:
-	python3 -m venv .venv
-	.venv/bin/pip install -e '.[dev,azure-monitor]'
+	uv python install
+	uv sync --all-extras --group dev
 	npm ci
 
 browsers:
-	npx -y playwright@1.60.0 install chrome
+	npx playwright install chrome
 
 test:
-	.venv/bin/pytest
+	uv run pytest
 
 lint:
-	.venv/bin/ruff check .
+	uv run ruff check .
 
 typecheck:
-	.venv/bin/mypy src
+	uv run mypy src
 
 run:
-	.venv/bin/python -m maf_qa
+	uv run maf-qa
+
+build:
+	uv build
+
+upgrade:
+	uv lock --upgrade
