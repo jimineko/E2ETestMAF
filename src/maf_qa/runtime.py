@@ -245,7 +245,7 @@ def _resolve_github_copilot_token(settings: Settings) -> str:
         ) from exc
     except subprocess.CalledProcessError as exc:
         raise RuntimeError(
-            "Unable to resolve GitHub token from gh auth. Run `gh auth login` or set "
+            "Unable to resolve GitHub token from `gh auth token`. Run `gh auth login` or set "
             "MAF_QA_GITHUB_COPILOT_TOKEN."
         ) from exc
     token = result.stdout.strip()
