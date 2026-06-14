@@ -13,6 +13,7 @@ def test_playwright_args_include_mcp_boundaries(tmp_path: Path) -> None:
         azure_openai_deployment="test-model",
         storage_state_path=tmp_path / "missing.json",
         playwright_allowed_origins=["https://app.example.com"],
+        playwright_headless=True,
     )
 
     args = settings.playwright_args(tmp_path / "output")
