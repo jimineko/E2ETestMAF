@@ -118,7 +118,8 @@ class DiscoveryExecutor(SessionExecutor):
 Target: {run.request.target_url}
 Objective: {run.request.objective}
 Policies: {run.request.policies or ["No additional policies"]}
-Return the discovered pages, user flows, authentication requirement, and risks.
+Return the discovered pages, user flows, authentication requirement, risks, and next-step hints.
+Keep the hints short and action-oriented so the generator can decide what to inspect next.
 """
         try:
             findings = await run_structured(
@@ -173,8 +174,10 @@ Target: {discovery.run.request.target_url}
 Objective: {discovery.run.request.objective}
 Policies: {discovery.run.request.policies}
 Discovered topology: {discovery.findings.model_dump_json()}
+Discovery next-step hints: {discovery.findings.next_step_hints}
 Attempt: {attempt}
 Refinement instruction: {refinement or "None; create the initial plan."}
+Produce browser-ready scenarios with explicit execution_notes and overall handoff_hints.
 """
         try:
             generated = await run_structured(
@@ -215,8 +218,11 @@ class BrowserExecutor(SessionExecutor):
             plan = plan.model_copy(update={"review_history": message.review_history})
         prompt = f"""Execute this plan against {plan.discovery.run.request.target_url}.
 Plan: {plan.generated.model_dump_json()}
+Scenario execution notes: {[scenario.execution_notes for scenario in plan.generated.scenarios]}
+Plan handoff hints: {plan.generated.handoff_hints}
 Attempt: {plan.attempt}
 Return step-level evidence and all observed errors. Start and stop Playwright tracing.
+Include concise follow-up hints for the judge when evidence suggests a specific next check.
 """
         try:
             output = await run_structured(
@@ -253,6 +259,7 @@ class JudgeExecutor(SessionExecutor):
 Objective: {request.objective}
 Policies: {request.policies}
 Execution evidence: {execution.output.model_dump_json()}
+Browser follow-up hints: {execution.output.follow_up_hints}
 Return a concise evidence-based rationale, not hidden chain-of-thought.
 """
         try:
@@ -289,6 +296,7 @@ class SafetyExecutor(SessionExecutor):
         prompt = f"""Passively review this browser execution for security and privacy signals.
 Target: {execution.plan.discovery.run.request.target_url}
 Evidence: {execution.output.model_dump_json()}
+Browser follow-up hints: {execution.output.follow_up_hints}
 """
         try:
             result = await run_structured(

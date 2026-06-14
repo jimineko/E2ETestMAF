@@ -1,6 +1,6 @@
 # MAF + Playwright MCP Autonomous QA
 
-Microsoft Agent Framework (MAF) と Microsoft公式 Playwright MCP を使う、型付きの自律QAワークフローです。チャットモデルは Azure OpenAI または Google Gemini を選択できます。
+Microsoft Agent Framework (MAF) と Microsoft公式 Playwright MCP を使う、型付きの自律QAワークフローです。チャットモデルは Azure OpenAI / Google Gemini / GitHub Copilot (GitHub Models経由) を選択できます。
 
 ## 実装したフロー
 
@@ -20,6 +20,7 @@ Orchestrator -> Discovery -> Generator -> Browser(MCP)
 - `storageState` の再利用、`devtools` capabilityによるtrace開始/停止、成果物ZIP化
 - Azure OpenAIのManaged Identity認証
 - Gemini Developer APIのAPIキー認証、Vertex AIのADC認証
+- GitHub CopilotのGitHubトークン認証（明示トークンまたは `gh auth token` フォールバック）
 - Blob Storageへの成果物アップロード
 - OpenTelemetryのOTLP/Application Insights出力
 - Docker ComposeとAzure Container Apps Job用Bicep
@@ -49,6 +50,7 @@ Azure OpenAIを使う場合は事前に `az login`、Vertex AIのADCを使う場
 ### Agent設定とSkills
 
 5エージェントの名前、説明、instructions、モデルオプションは `agents/*.yaml` で管理します。provider、認証、tools、MCP、output schema、PowerFx式はYAMLから指定できません。
+Discoveryは `next_step_hints`、Generatorは `execution_notes` と `handoff_hints`、Browserは `follow_up_hints` を返し、各段階の次の手が伝わるようにします。
 
 対象アプリ固有の操作規約は、`SKILL.md` と `references/` だけを含むSkillとして作成し、`MAF_QA_SKILL_PATHS`へカンマ区切りで指定します。`scripts/` を含むSkillは起動時に拒否されます。
 
@@ -79,6 +81,15 @@ Gemini Developer APIを使う場合は次を設定します。
 MAF_QA_MODEL_PROVIDER=gemini
 MAF_QA_GEMINI_API_KEY=YOUR_API_KEY
 MAF_QA_GEMINI_MODEL=gemini-2.5-flash-lite
+```
+
+GitHub Copilot（GitHub Models）を使う場合は次を設定します。`MAF_QA_GITHUB_COPILOT_TOKEN` を省略した場合、`MAF_QA_GITHUB_COPILOT_USE_GH_CLI_TOKEN=true` で `gh auth token` を使用します。
+
+```dotenv
+MAF_QA_MODEL_PROVIDER=github_copilot
+MAF_QA_GITHUB_COPILOT_MODEL=gpt-4.1
+MAF_QA_GITHUB_COPILOT_BASE_URL=https://models.inference.ai.azure.com
+MAF_QA_GITHUB_COPILOT_TOKEN=YOUR_GITHUB_TOKEN
 ```
 
 Vertex AIを使う場合は、ADCを構成したうえで次を設定します。APIキーを利用するVertex AI Express Modeにも対応します。

@@ -79,6 +79,7 @@ class DiscoveryFindings(BaseModel):
     user_flows: list[str] = Field(default_factory=list)
     auth_required: bool = False
     risks: list[str] = Field(default_factory=list)
+    next_step_hints: list[str] = Field(default_factory=list)
 
 
 class DiscoveryReport(BaseModel):
@@ -92,12 +93,14 @@ class TestScenario(BaseModel):
     goal: str
     steps: list[str]
     expected_results: list[str]
+    execution_notes: list[str] = Field(default_factory=list)
     priority: int = Field(default=1, ge=1, le=3)
 
 
 class GeneratedPlan(BaseModel):
     scenarios: list[TestScenario] = Field(min_length=1)
     test_data_notes: list[str] = Field(default_factory=list)
+    handoff_hints: list[str] = Field(default_factory=list)
 
 
 class TestPlan(BaseModel):
@@ -126,6 +129,7 @@ class BrowserRunOutput(BaseModel):
     console_errors: list[str] = Field(default_factory=list)
     network_errors: list[str] = Field(default_factory=list)
     accessibility_notes: list[str] = Field(default_factory=list)
+    follow_up_hints: list[str] = Field(default_factory=list)
     artifact_paths: list[str] = Field(default_factory=list)
     summary: str
 

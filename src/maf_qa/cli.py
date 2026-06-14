@@ -14,7 +14,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run autonomous QA with MAF and Playwright MCP")
     parser.add_argument(
         "--model-provider",
-        choices=["azure_openai", "gemini"],
+        choices=["azure_openai", "gemini", "github_copilot"],
         help="Chat model provider; overrides MAF_QA_MODEL_PROVIDER",
     )
     parser.add_argument("--target-url", help="Absolute target application URL")
