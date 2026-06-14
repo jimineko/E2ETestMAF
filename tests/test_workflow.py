@@ -24,7 +24,13 @@ from maf_qa.models import (
 from maf_qa.models import (
     TestScenario as ScenarioModel,
 )
-from maf_qa.workflow import CHECKPOINT_TYPES, AgentSet, build_qa_workflow
+from maf_qa.workflow import (
+    CHECKPOINT_TYPES,
+    AgentSet,
+    build_browser_resume_workflow,
+    build_qa_workflow,
+    load_checkpoint_test_plan,
+)
 
 
 class FakeAgent:
@@ -301,6 +307,29 @@ async def test_sessions_are_isolated_between_runs(tmp_path: Path) -> None:
     discovery = agents.discovery
     assert isinstance(discovery, FakeAgent)
     assert len(set(discovery.session_ids)) == 2
+
+
+async def test_checkpoint_resume_restarts_from_browser_with_fresh_agents(tmp_path: Path) -> None:
+    checkpoint_root = tmp_path / "checkpoints"
+    initial_agents = _basic_agents()
+    initial_workflow = build_qa_workflow(initial_agents, checkpoint_root)
+    request = QARequest(target_url="https://example.com", objective="Initial run")
+    await initial_workflow.run(request)
+
+    plan = await load_checkpoint_test_plan(checkpoint_root)
+    resumed_agents = _basic_agents()
+    resumed_workflow = build_browser_resume_workflow(resumed_agents, checkpoint_root)
+    result = await resumed_workflow.run(plan)
+
+    report = result.get_outputs()[0]
+    assert isinstance(report, QAReport)
+    assert report.run_id == request.run_id
+    discovery = resumed_agents.discovery
+    browser = resumed_agents.browser
+    assert isinstance(discovery, FakeAgent)
+    assert isinstance(browser, FakeAgent)
+    assert discovery.calls == 0
+    assert browser.calls == 1
 
 
 def _basic_agents(

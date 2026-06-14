@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import subprocess
 from collections.abc import Mapping
 from pathlib import Path
@@ -13,9 +15,24 @@ from azure.identity.aio import DefaultAzureCredential
 
 from maf_qa.agent_config import load_agent_set
 from maf_qa.artifacts import archive_run, blob_uri, upload_artifacts
+from maf_qa.codeact import (
+    CodeActUnavailable,
+    ToolAuditLog,
+    build_codeact_provider,
+    normalize_origin,
+    preflight_hyperlight,
+)
 from maf_qa.config import Settings
-from maf_qa.models import QAReport, QARequest
-from maf_qa.workflow import AgentSet, build_qa_workflow
+from maf_qa.models import (
+    FailureKind,
+    LiteralStatus,
+    QAReport,
+    QARequest,
+    RunContext,
+    StageFailure,
+    TestPlan,
+)
+from maf_qa.workflow import AgentSet, build_browser_resume_workflow, build_qa_workflow
 
 PLAYWRIGHT_ALLOWED_TOOLS = {
     "browser_click",
@@ -86,9 +103,10 @@ def build_chat_client(
 
 
 class RuntimeResources:
-    def __init__(self, settings: Settings, resource_id: str) -> None:
+    def __init__(self, settings: Settings, resource_id: str, *, target_url: str | None) -> None:
         self.settings = settings
         self.resource_id = resource_id
+        self.target_url = target_url
         self.run_dir = settings.artifact_root / resource_id
         self.playwright_dir = self.run_dir / "playwright"
         self.playwright_dir.mkdir(parents=True, exist_ok=True)
@@ -97,17 +115,30 @@ class RuntimeResources:
         )
         self.credential = DefaultAzureCredential() if needs_azure_credential else None
         self.client = build_chat_client(settings, self.credential)
+        self.allowed_origins = {
+            normalize_origin(origin)
+            for origin in (
+                settings.playwright_allowed_origins
+                or ([target_url] if target_url is not None else [])
+            )
+        }
         tool_class = (
             GeminiCompatibleMCPStdioTool
             if settings.model_provider == "gemini"
             else MCPStdioTool
         )
+        allowed_tools = set(PLAYWRIGHT_ALLOWED_TOOLS)
+        if not settings.codeact_allow_file_upload:
+            allowed_tools.discard("browser_file_upload")
         self.mcp = tool_class(
             name="playwright",
             command=settings.playwright_command,
-            args=settings.playwright_args(self.playwright_dir),
+            args=settings.playwright_args(
+                self.playwright_dir,
+                default_allowed_origin=(normalize_origin(target_url) if target_url else None),
+            ),
             request_timeout=max(settings.playwright_navigation_timeout_ms // 1000 + 30, 90),
-            allowed_tools=PLAYWRIGHT_ALLOWED_TOOLS,
+            allowed_tools=allowed_tools,
         )
         self.agents: AgentSet = load_agent_set(
             _agent_config_dir(settings.agent_config_dir),
@@ -117,24 +148,70 @@ class RuntimeResources:
             trace_content=settings.trace_content,
         )
         self._mcp_entered = False
+        self.codeact_active = False
+        self.codeact_error: CodeActUnavailable | None = None
+        self.codeact_providers: list[Any] = []
+        self.audit_log = ToolAuditLog()
 
     async def start(self) -> RuntimeResources:
         await self.mcp.__aenter__()
         self._mcp_entered = True
+        if self.settings.codeact_mode != "disabled":
+            try:
+                preflight_hyperlight(require_kvm=self.settings.codeact_require_kvm)
+                self._enable_codeact()
+            except CodeActUnavailable as exc:
+                self.codeact_error = exc
+                if self.settings.codeact_mode == "required":
+                    return self
         return self
+
+    def _enable_codeact(self) -> None:
+        for stage in ("discovery", "browser"):
+            provider = build_codeact_provider(
+                stage=stage,
+                mcp_functions=self.mcp.functions,
+                allowed_origins=self.allowed_origins,
+                allow_file_upload=self.settings.codeact_allow_file_upload,
+                allow_destructive_actions=self.settings.codeact_allow_destructive_actions,
+                max_code_bytes=self.settings.codeact_max_code_bytes,
+                max_invocations=self.settings.codeact_max_invocations,
+                audit_log=self.audit_log,
+                host_loop=asyncio.get_running_loop(),
+            )
+            agent = getattr(self.agents, stage)
+            agent.context_providers.append(provider)
+            agent.middleware.append(provider.policy_middleware)  # type: ignore[attr-defined]
+            self.codeact_providers.append(provider)
+        self.codeact_active = True
 
     def workflow(self, *, checkpoint_root: Path, interactive: bool) -> Any:
         return build_qa_workflow(
             self.agents,
             checkpoint_root,
-            tools=[self.mcp],
+            tools=None if self.codeact_active else [self.mcp],
             structured_retries=self.settings.structured_output_retries,
             use_native_response_format=self.settings.model_provider
             not in {"gemini", "github_copilot"},
             interactive=interactive,
         )
 
+    def browser_resume_workflow(self, *, checkpoint_root: Path) -> Any:
+        return build_browser_resume_workflow(
+            self.agents,
+            checkpoint_root,
+            tools=None if self.codeact_active else [self.mcp],
+            structured_retries=self.settings.structured_output_retries,
+            use_native_response_format=self.settings.model_provider
+            not in {"gemini", "github_copilot"},
+        )
+
     async def close(self) -> None:
+        for provider in self.codeact_providers:
+            execute_code = getattr(provider, "_execute_code_tool", None)
+            close = getattr(execute_code, "close", None)
+            if callable(close):
+                close()
         if self._mcp_entered or self.mcp.is_connected:
             await self.mcp.close()
         if self.credential is not None:
@@ -145,7 +222,7 @@ class QARuntime:
     def __init__(self, settings: Settings, request: QARequest) -> None:
         self.settings = settings
         self.request = request
-        self.resources = RuntimeResources(settings, request.run_id)
+        self.resources = RuntimeResources(settings, request.run_id, target_url=request.target_url)
 
     async def __aenter__(self) -> QARuntime:
         await self.resources.start()
@@ -159,19 +236,29 @@ class QARuntime:
     ) -> None:
         await self.resources.close()
 
-    async def run(self) -> QAReport:
-        workflow = self.resources.workflow(
-            checkpoint_root=self.settings.checkpoint_root / self.request.run_id,
-            interactive=False,
-        )
-        result = await workflow.run(self.request)
+    async def run(self, *, resume_plan: TestPlan | None = None) -> QAReport:
+        if self.settings.codeact_mode == "required" and self.resources.codeact_error is not None:
+            report = _codeact_blocked_report(self.request, self.resources.codeact_error)
+            return await self._persist_report(report)
+        checkpoint_root = self.settings.checkpoint_root / self.request.run_id
+        if resume_plan is None:
+            workflow = self.resources.workflow(checkpoint_root=checkpoint_root, interactive=False)
+            result = await workflow.run(self.request)
+        else:
+            if resume_plan.discovery.run.run_id != self.request.run_id:
+                raise ValueError("Resume plan run_id does not match the runtime request")
+            workflow = self.resources.browser_resume_workflow(checkpoint_root=checkpoint_root)
+            result = await workflow.run(resume_plan)
         outputs = result.get_outputs()
         if len(outputs) != 1 or not isinstance(outputs[0], QAReport):
             raise RuntimeError(f"Workflow returned unexpected outputs: {outputs!r}")
 
-        report = outputs[0]
+        return await self._persist_report(outputs[0])
+
+    async def _persist_report(self, report: QAReport) -> QAReport:
         run_dir = self.resources.run_dir
         report_path = run_dir / "report.json"
+        audit_path = run_dir / "tool-audit.json"
         archive_path = run_dir.parent / f"{run_dir.name}.zip"
         if self.settings.blob_account_url:
             report.artifact_uris = [
@@ -187,17 +274,30 @@ class QARuntime:
                     report.run_id,
                     archive_path.name,
                 ),
+                blob_uri(
+                    self.settings.blob_account_url,
+                    self.settings.blob_container,
+                    report.run_id,
+                    audit_path.name,
+                ),
             ]
         else:
-            report.artifact_uris = [str(report_path.resolve()), str(archive_path.resolve())]
+            report.artifact_uris = [
+                str(report_path.resolve()),
+                str(archive_path.resolve()),
+                str(audit_path.resolve()),
+            ]
 
         report_path.write_text(report.model_dump_json(indent=2), encoding="utf-8")
+        audit_path.write_text(
+            json.dumps(self.resources.audit_log.serializable(), indent=2), encoding="utf-8"
+        )
         archive = archive_run(run_dir)
         if self.settings.blob_account_url:
             if self.resources.credential is None:
                 raise RuntimeError("Blob upload requires an Azure credential")
             await upload_artifacts(
-                [report_path, archive],
+                [report_path, archive, audit_path],
                 account_url=self.settings.blob_account_url,
                 container_name=self.settings.blob_container,
                 credential=self.resources.credential,
@@ -206,9 +306,11 @@ class QARuntime:
         return report
 
 
-async def execute(settings: Settings, request: QARequest) -> QAReport:
+async def execute(
+    settings: Settings, request: QARequest, *, resume_plan: TestPlan | None = None
+) -> QAReport:
     async with QARuntime(settings, request) as runtime:
-        return await runtime.run()
+        return await runtime.run(resume_plan=resume_plan)
 
 
 def _agent_config_dir(configured: Path) -> Path:
@@ -219,6 +321,33 @@ def _agent_config_dir(configured: Path) -> Path:
         if packaged.is_dir():
             return packaged
     return configured
+
+
+def _codeact_blocked_report(request: QARequest, exc: CodeActUnavailable) -> QAReport:
+    run = RunContext(request=request, run_id=request.run_id)
+    failure = StageFailure(
+        run=run,
+        stage="codeact",
+        attempt=1,
+        kind=FailureKind.CONFIGURATION,
+        exception_type=type(exc).__name__,
+        message="CodeAct runtime is unavailable on this execution host",
+        retryable=False,
+        input_type="QARequest",
+        stage_input=request.model_dump(mode="json"),
+    )
+    return QAReport(
+        run_id=request.run_id,
+        target_url=request.target_url,
+        status=LiteralStatus.BLOCKED,
+        passed=False,
+        score=0,
+        attempts=0,
+        summary="CodeAct is required but the Hyperlight runtime failed preflight.",
+        policy_results=[],
+        security_findings=[],
+        failures=[failure],
+    )
 
 
 def _resolve_github_copilot_token(settings: Settings) -> str:

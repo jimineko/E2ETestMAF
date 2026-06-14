@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     model_retries: int = Field(default=2, ge=0, le=5)
     structured_output_retries: int = Field(default=1, ge=0, le=2)
     trace_content: bool = False
+    codeact_mode: Literal["required", "auto", "disabled"] = "auto"
+    codeact_max_code_bytes: int = Field(default=32_768, ge=1_024, le=1_048_576)
+    codeact_max_invocations: int = Field(default=6, ge=1, le=50)
+    codeact_require_kvm: bool = True
+    codeact_allow_file_upload: bool = False
+    codeact_allow_destructive_actions: bool = False
 
     playwright_command: str = "npx"
     playwright_package: str = "@playwright/mcp"
@@ -119,7 +125,9 @@ class Settings(BaseSettings):
             )
         return self
 
-    def playwright_args(self, output_dir: Path) -> list[str]:
+    def playwright_args(
+        self, output_dir: Path, *, default_allowed_origin: str | None = None
+    ) -> list[str]:
         args = [
             self.playwright_package,
             "--browser",
@@ -139,6 +147,9 @@ class Settings(BaseSettings):
             args.append("--headless")
         if self.storage_state_path.exists():
             args.extend(["--storage-state", str(self.storage_state_path.resolve())])
-        if self.playwright_allowed_origins:
-            args.extend(["--allowed-origins", ";".join(self.playwright_allowed_origins)])
+        allowed_origins = self.playwright_allowed_origins or (
+            [default_allowed_origin] if default_allowed_origin else []
+        )
+        if allowed_origins:
+            args.extend(["--allowed-origins", ";".join(allowed_origins)])
         return args

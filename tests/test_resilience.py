@@ -247,7 +247,7 @@ async def test_spans_do_not_capture_message_or_tool_arguments(
     finally:
         OBSERVABILITY_CONTEXT.reset(token)
 
-    attributes = dict(exporter.get_finished_spans()[0].attributes)
+    attributes = dict(exporter.get_finished_spans()[0].attributes or {})
     assert attributes["maf.run_id"] == "run-1"
     assert attributes["maf.stage"] == "judge"
     assert attributes["maf.attempt"] == 2

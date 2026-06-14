@@ -8,7 +8,7 @@ from agent_framework_gemini import GeminiChatClient
 from azure.identity.aio import DefaultAzureCredential
 
 from maf_qa.agent_config import load_agent_set
-from maf_qa.config import Settings
+from maf_qa.config import Settings as SettingsModel
 from maf_qa.runtime import (
     _resolve_github_copilot_token as resolve_github_copilot_token,
 )
@@ -19,6 +19,10 @@ from maf_qa.runtime import (
     _strip_json_schema_dialect as strip_json_schema_dialect,
 )
 from maf_qa.runtime import build_chat_client
+
+
+def Settings(**kwargs: Any) -> SettingsModel:
+    return SettingsModel(**kwargs)
 
 
 async def test_builds_azure_openai_client() -> None:

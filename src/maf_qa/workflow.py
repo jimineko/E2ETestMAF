@@ -18,7 +18,16 @@ from maf_qa.executors import (
     OrchestratorExecutor,
     SafetyExecutor,
 )
-from maf_qa.models import Decision, ExecutionResult, NextAction, StageFailure, StageRetry
+from maf_qa.models import (
+    Decision,
+    ExecutionResult,
+    NextAction,
+    QualityAssessment,
+    SafetyAssessment,
+    StageFailure,
+    StageRetry,
+    TestPlan,
+)
 
 CHECKPOINT_TYPES = [
     f"maf_qa.models:{name}"
@@ -148,6 +157,112 @@ def build_qa_workflow(
     else:
         builder = builder.add_edge(decision, finalizer, condition=_should_finalize)
     return builder.build()
+
+
+def build_browser_resume_workflow(
+    agents: AgentSet,
+    checkpoint_root: Path,
+    *,
+    tools: list[Any] | None = None,
+    structured_retries: int = 1,
+    use_native_response_format: bool = True,
+) -> Workflow:
+    generator = GeneratorExecutor(
+        "generator",
+        agents.generator,
+        structured_retries=structured_retries,
+        use_native_response_format=use_native_response_format,
+    )
+    browser = BrowserExecutor(
+        "browser",
+        agents.browser,
+        structured_retries=structured_retries,
+        tools=tools,
+        use_native_response_format=use_native_response_format,
+    )
+    judge = JudgeExecutor(
+        "judge",
+        agents.judge,
+        structured_retries=structured_retries,
+        use_native_response_format=use_native_response_format,
+    )
+    safety = SafetyExecutor(
+        "safety",
+        agents.safety,
+        structured_retries=structured_retries,
+        use_native_response_format=use_native_response_format,
+    )
+    decision = DecisionExecutor()
+    finalizer = FinalizerExecutor()
+    checkpoint_root.mkdir(parents=True, exist_ok=True)
+    storage = FileCheckpointStorage(
+        storage_path=checkpoint_root,
+        allowed_checkpoint_types=CHECKPOINT_TYPES,
+    )
+    return (
+        WorkflowBuilder(
+            start_executor=browser,
+            name="autonomous-web-qa-v2-browser-resume",
+            description="Resume a saved QA plan from the browser stage with fresh resources.",
+            checkpoint_storage=storage,
+            output_from=[finalizer],
+            max_iterations=80,
+        )
+        .add_edge(browser, judge, condition=_is_execution)
+        .add_edge(browser, safety, condition=_is_execution)
+        .add_edge(browser, decision, condition=_is_failure)
+        .add_fan_in_edges([judge, safety], decision)
+        .add_edge(decision, generator, condition=_should_retry)
+        .add_edge(generator, browser, condition=_not_failure)
+        .add_edge(generator, decision, condition=_is_failure)
+        .add_edge(decision, finalizer, condition=_should_finalize)
+        .build()
+    )
+
+
+async def load_checkpoint_test_plan(
+    checkpoint_root: Path, *, checkpoint_id: str | None = None
+) -> TestPlan:
+    storage = FileCheckpointStorage(
+        storage_path=checkpoint_root,
+        allowed_checkpoint_types=CHECKPOINT_TYPES,
+    )
+    if checkpoint_id is not None:
+        checkpoint = await storage.load(checkpoint_id)
+        checkpoints = [checkpoint]
+        previous_id = checkpoint.previous_checkpoint_id
+        while previous_id is not None:
+            previous = await storage.load(previous_id)
+            checkpoints.append(previous)
+            previous_id = previous.previous_checkpoint_id
+    else:
+        checkpoints = await storage.list_checkpoints(workflow_name="autonomous-web-qa-v2")
+        checkpoints.sort(key=lambda item: item.timestamp, reverse=True)
+
+    for checkpoint in checkpoints:
+        plans = [
+            plan
+            for messages in checkpoint.messages.values()
+            for message in messages
+            if (plan := _test_plan_from_checkpoint_data(message.data)) is not None
+        ]
+        if plans:
+            return max(plans, key=lambda item: item.attempt)
+    raise ValueError("No resumable TestPlan was found in the selected checkpoint chain")
+
+
+def _test_plan_from_checkpoint_data(data: object) -> TestPlan | None:
+    if isinstance(data, TestPlan):
+        return data
+    if isinstance(data, ExecutionResult):
+        return data.plan
+    if isinstance(data, QualityAssessment):
+        return data.execution.plan
+    if isinstance(data, SafetyAssessment):
+        return data.execution.plan
+    if isinstance(data, NextAction):
+        return data.plan
+    return None
 
 
 def _is_failure(message: object) -> bool:

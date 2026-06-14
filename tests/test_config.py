@@ -1,9 +1,14 @@
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
 
-from maf_qa.config import Settings
+from maf_qa.config import Settings as SettingsModel
+
+
+def Settings(**kwargs: Any) -> SettingsModel:
+    return SettingsModel(**kwargs)
 
 
 def test_playwright_args_include_mcp_boundaries(tmp_path: Path) -> None:

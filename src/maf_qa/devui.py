@@ -15,7 +15,7 @@ def main() -> None:
         if settings.devui_host not in {"127.0.0.1", "localhost"}:
             raise ValueError("DevUI is restricted to localhost")
         configure_telemetry(settings)
-        resources = RuntimeResources(settings, "devui")
+        resources = RuntimeResources(settings, "devui", target_url=settings.target_url)
         workflow = resources.workflow(
             checkpoint_root=settings.checkpoint_root / "devui",
             interactive=True,

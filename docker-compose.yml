@@ -1,11 +1,21 @@
+x-qa-common: &qa-common
+  platform: linux/amd64
+  build: .
+  env_file:
+    - path: .env
+      required: false
+  volumes:
+    - ./artifacts:/app/artifacts
+    - ./checkpoints:/app/checkpoints
+    - ./auth:/app/auth:ro
+  shm_size: 2gb
+
 services:
   qa:
-    build: .
-    env_file:
-      - path: .env
-        required: false
-    volumes:
-      - ./artifacts:/app/artifacts
-      - ./checkpoints:/app/checkpoints
-      - ./auth:/app/auth:ro
-    shm_size: 2gb
+    <<: *qa-common
+
+  qa-hyperlight:
+    <<: *qa-common
+    profiles: [hyperlight]
+    devices:
+      - /dev/kvm:/dev/kvm

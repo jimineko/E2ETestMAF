@@ -8,6 +8,7 @@ from maf_qa.config import Settings
 from maf_qa.models import LiteralStatus, QARequest
 from maf_qa.runtime import execute
 from maf_qa.telemetry import configure_telemetry
+from maf_qa.workflow import load_checkpoint_test_plan
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -21,24 +22,40 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--objective", help="Business objective to validate")
     parser.add_argument("--policy", action="append", default=[], help="Business policy; repeatable")
     parser.add_argument("--max-refinements", type=int, help="Self-healing retries, 0-5")
+    parser.add_argument("--resume-run-id", help="Resume a saved run from its browser stage")
+    parser.add_argument("--checkpoint-id", help="Specific checkpoint in the saved run chain")
     return parser
 
 
 async def _run(args: argparse.Namespace) -> int:
     settings = Settings(model_provider=args.model_provider) if args.model_provider else Settings()
-    target_url = args.target_url or settings.target_url
-    if not target_url:
-        raise ValueError("--target-url or MAF_QA_TARGET_URL is required")
-    request = QARequest(
-        target_url=target_url,
-        objective=args.objective or settings.objective,
-        policies=args.policy or settings.policies,
-        max_refinements=(
-            args.max_refinements if args.max_refinements is not None else settings.max_refinements
-        ),
-    )
+    resume_plan = None
+    if args.resume_run_id:
+        resume_plan = await load_checkpoint_test_plan(
+            settings.checkpoint_root / args.resume_run_id,
+            checkpoint_id=args.checkpoint_id,
+        )
+        request = resume_plan.discovery.run.request
+        if request.run_id != args.resume_run_id:
+            raise ValueError("Saved TestPlan run_id does not match --resume-run-id")
+    else:
+        if args.checkpoint_id:
+            raise ValueError("--checkpoint-id requires --resume-run-id")
+        target_url = args.target_url or settings.target_url
+        if not target_url:
+            raise ValueError("--target-url or MAF_QA_TARGET_URL is required")
+        request = QARequest(
+            target_url=target_url,
+            objective=args.objective or settings.objective,
+            policies=args.policy or settings.policies,
+            max_refinements=(
+                args.max_refinements
+                if args.max_refinements is not None
+                else settings.max_refinements
+            ),
+        )
     configure_telemetry(settings)
-    report = await execute(settings, request)
+    report = await execute(settings, request, resume_plan=resume_plan)
     print(report.model_dump_json(indent=2))
     if report.status == LiteralStatus.BLOCKED:
         return 3

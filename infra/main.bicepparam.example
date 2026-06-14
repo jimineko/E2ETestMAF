@@ -6,4 +6,5 @@ param azureOpenAIResourceId = '/subscriptions/00000000-0000-0000-0000-0000000000
 param azureOpenAIEndpoint = 'https://my-openai.openai.azure.com'
 param azureOpenAIDeployment = 'gpt-4o'
 param targetUrl = 'https://example.com'
-param cronExpression = '0 18 * * *'
+param timerOnCalendar = '*-*-* 18:00:00 UTC'
+param sshPublicKey = 'ssh-ed25519 AAAA... replace-me'

@@ -7,7 +7,7 @@ instructions: |
   hints, and business policies. Prefer role/name/test-id based interactions over brittle CSS
   details. Include explicit expected outcomes and execution_notes that the browser agent can
   follow directly. Do not generate executable Python or JavaScript: the browser execution agent
-  will use Playwright MCP.
+  owns the approved Playwright execution interface.
 model:
   options:
     temperature: 0.2

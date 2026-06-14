@@ -9,7 +9,7 @@ param prefix string
 @description('Existing Azure OpenAI resource ID used for RBAC.')
 param azureOpenAIResourceId string
 
-@description('Azure OpenAI endpoint, for example https://name.openai.azure.com.')
+@description('Azure OpenAI endpoint.')
 param azureOpenAIEndpoint string
 
 @description('Azure OpenAI deployment name.')
@@ -18,26 +18,40 @@ param azureOpenAIDeployment string
 @description('Web application URL to test.')
 param targetUrl string
 
-@description('QA objective passed to the job.')
+@description('QA objective passed to the scheduled container.')
 param objective string = 'Validate the critical user journey and report regressions.'
 
-@description('ACA scheduled job cron expression. Container Apps evaluates this in UTC.')
-param cronExpression string = '0 18 * * *'
+@description('UTC time used by the systemd timer.')
+param timerOnCalendar string = '*-*-* 18:00:00 UTC'
 
 @description('Container image tag deployed to the new ACR.')
 param imageTag string = 'latest'
 
-@description('Globally unique storage account name. Lowercase letters and numbers only.')
+@description('Globally unique storage account name.')
 @minLength(3)
 @maxLength(24)
 param storageAccountName string
 
+@description('SSH public key for break-glass VM administration. The VM has no public IP.')
+param sshPublicKey string
+
+@description('KVM-capable x64 VM size. Dsv5 Intel sizes support nested virtualization.')
+param vmSize string = 'Standard_D2s_v5'
+
+@description('Administrative username for the private VM.')
+param adminUsername string = 'azureuser'
+
 var identityName = '${prefix}-qa-id'
-var environmentName = '${prefix}-qa-env'
-var jobName = '${prefix}-qa-job'
+var vmName = '${prefix}-qa-vm'
+var nicName = '${prefix}-qa-nic'
+var vnetName = '${prefix}-qa-vnet'
+var natName = '${prefix}-qa-nat'
+var natPublicIpName = '${prefix}-qa-nat-pip'
 var acrName = toLower(replace('${prefix}qaacr', '-', ''))
 var workspaceName = '${prefix}-qa-law'
+var appInsightsName = '${prefix}-qa-ai'
 var azureOpenAIIdParts = split(azureOpenAIResourceId, '/')
+var imageName = '${acr.properties.loginServer}/maf-playwright-qa:${imageTag}'
 
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: identityName
@@ -55,17 +69,13 @@ resource workspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   }
 }
 
-resource environment 'Microsoft.App/managedEnvironments@2025-07-01' = {
-  name: environmentName
+resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
+  name: appInsightsName
   location: location
+  kind: 'web'
   properties: {
-    appLogsConfiguration: {
-      destination: 'log-analytics'
-      logAnalyticsConfiguration: {
-        customerId: workspace.properties.customerId
-        sharedKey: workspace.listKeys().primarySharedKey
-      }
-    }
+    Application_Type: 'web'
+    WorkspaceResourceId: workspace.id
   }
 }
 
@@ -106,8 +116,134 @@ resource artifactContainer 'Microsoft.Storage/storageAccounts/blobServices/conta
   }
 }
 
-resource job 'Microsoft.App/jobs@2025-07-01' = {
-  name: jobName
+resource natPublicIp 'Microsoft.Network/publicIPAddresses@2024-05-01' = {
+  name: natPublicIpName
+  location: location
+  sku: {
+    name: 'Standard'
+  }
+  properties: {
+    publicIPAllocationMethod: 'Static'
+  }
+}
+
+resource natGateway 'Microsoft.Network/natGateways@2024-05-01' = {
+  name: natName
+  location: location
+  sku: {
+    name: 'Standard'
+  }
+  properties: {
+    idleTimeoutInMinutes: 10
+    publicIpAddresses: [
+      { id: natPublicIp.id }
+    ]
+  }
+}
+
+resource vnet 'Microsoft.Network/virtualNetworks@2024-05-01' = {
+  name: vnetName
+  location: location
+  properties: {
+    addressSpace: {
+      addressPrefixes: ['10.42.0.0/16']
+    }
+    subnets: [
+      {
+        name: 'workload'
+        properties: {
+          addressPrefix: '10.42.1.0/24'
+          natGateway: { id: natGateway.id }
+          privateEndpointNetworkPolicies: 'Disabled'
+        }
+      }
+    ]
+  }
+}
+
+resource nic 'Microsoft.Network/networkInterfaces@2024-05-01' = {
+  name: nicName
+  location: location
+  properties: {
+    ipConfigurations: [
+      {
+        name: 'ipconfig'
+        properties: {
+          privateIPAllocationMethod: 'Dynamic'
+          subnet: {
+            id: resourceId('Microsoft.Network/virtualNetworks/subnets', vnet.name, 'workload')
+          }
+        }
+      }
+    ]
+  }
+}
+
+var cloudInit = format('''
+#cloud-config
+package_update: true
+packages:
+  - docker.io
+  - curl
+  - ca-certificates
+write_files:
+  - path: /etc/maf-qa.env
+    permissions: '0600'
+    content: |
+      AZURE_CLIENT_ID={0}
+      MAF_QA_MODEL_PROVIDER=azure_openai
+      MAF_QA_AZURE_OPENAI_ENDPOINT={1}
+      MAF_QA_AZURE_OPENAI_DEPLOYMENT={2}
+      MAF_QA_TARGET_URL={3}
+      MAF_QA_OBJECTIVE={4}
+      MAF_QA_BLOB_ACCOUNT_URL=https://{5}.blob.{6}
+      MAF_QA_BLOB_CONTAINER={7}
+      MAF_QA_APPLICATIONINSIGHTS_CONNECTION_STRING={8}
+      MAF_QA_CODEACT_MODE=required
+      MAF_QA_CODEACT_REQUIRE_KVM=true
+      MAF_QA_CODEACT_ALLOW_FILE_UPLOAD=false
+      MAF_QA_CODEACT_ALLOW_DESTRUCTIVE_ACTIONS=false
+      MAF_QA_PLAYWRIGHT_HEADLESS=true
+      MAF_QA_PLAYWRIGHT_ALLOWED_ORIGINS={3}
+  - path: /etc/systemd/system/maf-qa.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=MAF Hyperlight autonomous QA
+      After=docker.service network-online.target
+      Requires=docker.service
+
+      [Service]
+      Type=oneshot
+      ExecStartPre=/usr/bin/az login --identity --username {0}
+      ExecStartPre=/usr/bin/az acr login --name {9}
+      ExecStartPre=-/usr/bin/docker rm -f maf-qa
+      ExecStart=/usr/bin/docker run --rm --name maf-qa --device=/dev/kvm:/dev/kvm --env-file /etc/maf-qa.env -v /var/lib/maf-qa/artifacts:/app/artifacts -v /var/lib/maf-qa/checkpoints:/app/checkpoints {10}
+      TimeoutStartSec=2h
+  - path: /etc/systemd/system/maf-qa.timer
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=Run MAF QA on schedule
+
+      [Timer]
+      OnCalendar={11}
+      Persistent=true
+      RandomizedDelaySec=5m
+
+      [Install]
+      WantedBy=timers.target
+runcmd:
+  - [bash, -lc, 'curl -sL https://aka.ms/InstallAzureCLIDeb | bash']
+  - [bash, -lc, 'mkdir -p /var/lib/maf-qa/artifacts /var/lib/maf-qa/checkpoints']
+  - [bash, -lc, 'test -e /dev/kvm']
+  - [systemctl, enable, --now, docker]
+  - [systemctl, daemon-reload]
+  - [systemctl, enable, --now, maf-qa.timer]
+''', identity.properties.clientId, azureOpenAIEndpoint, azureOpenAIDeployment, targetUrl, objective, storage.name, az.environment().suffixes.storage, artifactContainer.name, appInsights.properties.ConnectionString, acr.name, imageName, timerOnCalendar)
+
+resource vm 'Microsoft.Compute/virtualMachines@2024-07-01' = {
+  name: vmName
   location: location
   identity: {
     type: 'UserAssigned'
@@ -116,43 +252,42 @@ resource job 'Microsoft.App/jobs@2025-07-01' = {
     }
   }
   properties: {
-    environmentId: environment.id
-    configuration: {
-      triggerType: 'Schedule'
-      replicaTimeout: 7200
-      replicaRetryLimit: 1
-      scheduleTriggerConfig: {
-        cronExpression: cronExpression
-        parallelism: 1
-        replicaCompletionCount: 1
-      }
-      registries: [
-        {
-          server: acr.properties.loginServer
-          identity: identity.id
-        }
-      ]
+    hardwareProfile: {
+      vmSize: vmSize
     }
-    template: {
-      containers: [
-        {
-          name: 'qa'
-          image: '${acr.properties.loginServer}/maf-playwright-qa:${imageTag}'
-          resources: {
-            cpu: json('2.0')
-            memory: '4Gi'
-          }
-          env: [
-            { name: 'AZURE_CLIENT_ID', value: identity.properties.clientId }
-            { name: 'MAF_QA_AZURE_OPENAI_ENDPOINT', value: azureOpenAIEndpoint }
-            { name: 'MAF_QA_AZURE_OPENAI_DEPLOYMENT', value: azureOpenAIDeployment }
-            { name: 'MAF_QA_TARGET_URL', value: targetUrl }
-            { name: 'MAF_QA_OBJECTIVE', value: objective }
-            { name: 'MAF_QA_BLOB_ACCOUNT_URL', value: 'https://${storage.name}.blob.${az.environment().suffixes.storage}' }
-            { name: 'MAF_QA_BLOB_CONTAINER', value: artifactContainer.name }
-            { name: 'MAF_QA_PLAYWRIGHT_HEADLESS', value: 'true' }
+    storageProfile: {
+      imageReference: {
+        publisher: 'Canonical'
+        offer: 'ubuntu-24_04-lts'
+        sku: 'server'
+        version: 'latest'
+      }
+      osDisk: {
+        createOption: 'FromImage'
+        managedDisk: {
+          storageAccountType: 'Premium_LRS'
+        }
+      }
+    }
+    osProfile: {
+      computerName: vmName
+      adminUsername: adminUsername
+      customData: base64(cloudInit)
+      linuxConfiguration: {
+        disablePasswordAuthentication: true
+        ssh: {
+          publicKeys: [
+            {
+              path: '/home/${adminUsername}/.ssh/authorized_keys'
+              keyData: sshPublicKey
+            }
           ]
         }
+      }
+    }
+    networkProfile: {
+      networkInterfaces: [
+        { id: nic.id }
       ]
     }
   }
@@ -194,5 +329,6 @@ module openAIRbac './openai-rbac.bicep' = {
 }
 
 output acrLoginServer string = acr.properties.loginServer
-output jobResourceId string = job.id
+output vmResourceId string = vm.id
 output managedIdentityClientId string = identity.properties.clientId
+output applicationInsightsConnectionString string = appInsights.properties.ConnectionString

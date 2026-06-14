@@ -7,11 +7,12 @@ name = "maf-playwright-qa"
 version = "0.1.0"
 description = "Autonomous web QA workflow built with Microsoft Agent Framework and Playwright MCP"
 readme = "README.md"
-requires-python = ">=3.14,<3.15"
+requires-python = ">=3.13,<3.14"
 dependencies = [
   "agent-framework-core==1.8.1",
   "agent-framework-declarative==1.0.0b260528",
   "agent-framework-gemini==1.0.0a260609",
+  "agent-framework-hyperlight==1.0.0b260521",
   "agent-framework-openai==1.8.1",
   "aiohttp>=3.13,<4",
   "azure-identity>=1.25,<2",
@@ -25,6 +26,12 @@ dependencies = [
 [project.optional-dependencies]
 azure-monitor = ["azure-monitor-opentelemetry-exporter>=1.0.0b45"]
 devui = ["agent-framework-devui==1.0.0b260528"]
+hyperlight-runtime = [
+  "hyperlight-sandbox==0.4.0",
+  "hyperlight-sandbox-backend-wasm==0.4.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "hyperlight-sandbox-python-guest==0.4.0",
+]
+rampart = ["rampart==0.1.0"]
 
 [dependency-groups]
 dev = [
@@ -48,19 +55,27 @@ packages = ["src/maf_qa"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+  "integration: requires Linux x86_64, KVM, Playwright, and external runtime dependencies",
+  "xdist_group(name): keep RAMPART trial groups on one worker",
+]
 
 [tool.ruff]
 line-length = 100
-target-version = "py314"
+target-version = "py313"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.mypy]
-python_version = "3.14"
+python_version = "3.13"
 strict = true
 packages = ["maf_qa"]
 
 [[tool.mypy.overrides]]
 module = ["azure.monitor.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["rampart", "rampart.*"]
 ignore_missing_imports = true

@@ -1,0 +1,52 @@
+name: Hyperlight and RAMPART
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 18 * * *"
+
+jobs:
+  safety:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      MAF_QA_MODEL_PROVIDER: azure_openai
+      MAF_QA_AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+      MAF_QA_AZURE_OPENAI_DEPLOYMENT: ${{ secrets.AZURE_OPENAI_DEPLOYMENT }}
+      MAF_QA_CODEACT_MODE: required
+      MAF_QA_CODEACT_REQUIRE_KVM: true
+      MAF_QA_RUN_HYPERLIGHT_INTEGRATION: "1"
+      MAF_QA_RAMPART_TARGET_URL: http://127.0.0.1:8765
+      MAF_QA_PLAYWRIGHT_ALLOWED_ORIGINS: http://127.0.0.1:8765
+      MAF_QA_BLOB_ACCOUNT_URL: ${{ secrets.QA_BLOB_ACCOUNT_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Enable KVM access
+        run: |
+          test -e /dev/kvm
+          sudo chmod 0666 /dev/kvm
+      - run: uv sync --all-extras --group dev
+      - run: npm ci
+      - run: npx playwright install --with-deps chrome
+      - name: Start managed fixture
+        run: |
+          uv run python -m http.server 8765 --directory tests/rampart/fixture > /tmp/fixture.log 2>&1 &
+          sleep 2
+          curl --fail http://127.0.0.1:8765/
+      - run: uv run pytest tests/test_hyperlight_integration.py tests/rampart -v
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rampart-reports
+          path: artifacts/rampart
