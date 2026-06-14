@@ -7,7 +7,7 @@ from agent_framework import AgentResponse, AgentSession
 from pydantic import BaseModel, ValidationError
 from pydantic_core import ValidationError as CoreValidationError
 
-from maf_qa.middleware import OBSERVABILITY_CONTEXT
+from maf_e2e.middleware import OBSERVABILITY_CONTEXT
 
 
 class StructuredOutputError(ValueError):

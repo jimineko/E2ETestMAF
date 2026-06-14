@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 import yaml
 
-from maf_qa.agent_config import AGENT_FILES, load_agent_set
+from maf_e2e.agent_config import AGENT_FILES, load_agent_set
 
 ROOT = Path(__file__).parents[1]
 

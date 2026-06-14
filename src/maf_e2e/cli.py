@@ -4,19 +4,21 @@ import argparse
 import asyncio
 import sys
 
-from maf_qa.config import Settings
-from maf_qa.models import LiteralStatus, QARequest
-from maf_qa.runtime import execute
-from maf_qa.telemetry import configure_telemetry
-from maf_qa.workflow import load_checkpoint_test_plan
+from maf_e2e.config import Settings
+from maf_e2e.models import E2ETestRequest, LiteralStatus
+from maf_e2e.runtime import execute
+from maf_e2e.telemetry import configure_telemetry
+from maf_e2e.workflow import load_checkpoint_test_plan
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run autonomous QA with MAF and Playwright MCP")
+    parser = argparse.ArgumentParser(
+        description="Run autonomous E2E testing with MAF and Playwright MCP"
+    )
     parser.add_argument(
         "--model-provider",
         choices=["azure_openai", "gemini", "github_copilot"],
-        help="Chat model provider; overrides MAF_QA_MODEL_PROVIDER",
+        help="Chat model provider; overrides MAF_E2E_MODEL_PROVIDER",
     )
     parser.add_argument("--target-url", help="Absolute target application URL")
     parser.add_argument("--objective", help="Business objective to validate")
@@ -43,8 +45,8 @@ async def _run(args: argparse.Namespace) -> int:
             raise ValueError("--checkpoint-id requires --resume-run-id")
         target_url = args.target_url or settings.target_url
         if not target_url:
-            raise ValueError("--target-url or MAF_QA_TARGET_URL is required")
-        request = QARequest(
+            raise ValueError("--target-url or MAF_E2E_TARGET_URL is required")
+        request = E2ETestRequest(
             target_url=target_url,
             objective=args.objective or settings.objective,
             policies=args.policy or settings.policies,

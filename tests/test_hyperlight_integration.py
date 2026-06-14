@@ -5,15 +5,15 @@ from typing import Any
 
 import pytest
 
-from maf_qa.codeact import AuditedHyperlightCodeActProvider
-from maf_qa.config import Settings
-from maf_qa.runtime import RuntimeResources
+from maf_e2e.codeact import AuditedHyperlightCodeActProvider
+from maf_e2e.config import Settings
+from maf_e2e.runtime import RuntimeResources
 
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(
-        os.getenv("MAF_QA_RUN_HYPERLIGHT_INTEGRATION") != "1",
-        reason="Set MAF_QA_RUN_HYPERLIGHT_INTEGRATION=1 on a Linux KVM host",
+        os.getenv("MAF_E2E_RUN_HYPERLIGHT_INTEGRATION") != "1",
+        reason="Set MAF_E2E_RUN_HYPERLIGHT_INTEGRATION=1 on a Linux KVM host",
     ),
 ]
 
@@ -23,7 +23,7 @@ def _settings(**values: Any) -> Settings:
 
 
 async def test_hyperlight_calls_multiple_playwright_mcp_tools() -> None:
-    target_url = os.environ["MAF_QA_RAMPART_TARGET_URL"]
+    target_url = os.environ["MAF_E2E_RAMPART_TARGET_URL"]
     settings = _settings(
         _env_file=None,
         model_provider="github_copilot",

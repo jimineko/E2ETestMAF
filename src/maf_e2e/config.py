@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        env_prefix="MAF_QA_",
+        env_prefix="MAF_E2E_",
         extra="ignore",
     )
 
@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     artifact_root: Path = Path("artifacts")
     checkpoint_root: Path = Path("checkpoints")
     blob_account_url: str | None = None
-    blob_container: str = "qa-artifacts"
+    blob_container: str = "e2e-artifacts"
 
     otlp_endpoint: str | None = None
     applicationinsights_connection_string: str | None = None
@@ -87,41 +87,41 @@ class Settings(BaseSettings):
         if self.model_provider == "azure_openai":
             if not self.azure_openai_endpoint or not self.azure_openai_deployment:
                 raise ValueError(
-                    "Azure OpenAI requires MAF_QA_AZURE_OPENAI_ENDPOINT and "
-                    "MAF_QA_AZURE_OPENAI_DEPLOYMENT"
+                    "Azure OpenAI requires MAF_E2E_AZURE_OPENAI_ENDPOINT and "
+                    "MAF_E2E_AZURE_OPENAI_DEPLOYMENT"
                 )
             return self
 
         if self.model_provider == "gemini":
             if not self.gemini_model:
-                raise ValueError("Gemini requires MAF_QA_GEMINI_MODEL")
+                raise ValueError("Gemini requires MAF_E2E_GEMINI_MODEL")
             has_gemini_api_key = bool(
                 self.gemini_api_key and self.gemini_api_key.get_secret_value().strip()
             )
             if not self.gemini_use_vertex_ai and not has_gemini_api_key:
-                raise ValueError("Gemini Developer API requires MAF_QA_GEMINI_API_KEY")
+                raise ValueError("Gemini Developer API requires MAF_E2E_GEMINI_API_KEY")
             if (
                 self.gemini_use_vertex_ai
                 and not has_gemini_api_key
                 and (not self.gemini_vertex_project or not self.gemini_vertex_location)
             ):
                 raise ValueError(
-                    "Vertex AI requires MAF_QA_GEMINI_API_KEY or both "
-                    "MAF_QA_GEMINI_VERTEX_PROJECT and MAF_QA_GEMINI_VERTEX_LOCATION"
+                    "Vertex AI requires MAF_E2E_GEMINI_API_KEY or both "
+                    "MAF_E2E_GEMINI_VERTEX_PROJECT and MAF_E2E_GEMINI_VERTEX_LOCATION"
                 )
             return self
 
         if not self.github_copilot_model.strip():
-            raise ValueError("GitHub Copilot requires MAF_QA_GITHUB_COPILOT_MODEL")
+            raise ValueError("GitHub Copilot requires MAF_E2E_GITHUB_COPILOT_MODEL")
         if not self.github_copilot_base_url.strip():
-            raise ValueError("GitHub Copilot requires MAF_QA_GITHUB_COPILOT_BASE_URL")
+            raise ValueError("GitHub Copilot requires MAF_E2E_GITHUB_COPILOT_BASE_URL")
         has_copilot_token = bool(
             self.github_copilot_token and self.github_copilot_token.get_secret_value().strip()
         )
         if not has_copilot_token and not self.github_copilot_use_gh_cli_token:
             raise ValueError(
-                "GitHub Copilot requires MAF_QA_GITHUB_COPILOT_TOKEN or "
-                "MAF_QA_GITHUB_COPILOT_USE_GH_CLI_TOKEN=true"
+                "GitHub Copilot requires MAF_E2E_GITHUB_COPILOT_TOKEN or "
+                "MAF_E2E_GITHUB_COPILOT_USE_GH_CLI_TOKEN=true"
             )
         return self
 

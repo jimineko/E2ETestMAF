@@ -7,8 +7,8 @@ import yaml
 from agent_framework import Agent, FunctionMiddleware, SkillsProvider, SupportsChatGetResponse
 from agent_framework.declarative import AgentFactory
 
-from maf_qa.middleware import ChatRetryMiddleware, ToolTelemetryMiddleware
-from maf_qa.workflow import AgentSet
+from maf_e2e.middleware import ChatRetryMiddleware, ToolTelemetryMiddleware
+from maf_e2e.workflow import AgentSet
 
 AGENT_FILES = {
     "discovery": "discovery.yaml",

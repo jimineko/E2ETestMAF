@@ -4,7 +4,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from maf_qa.config import Settings as SettingsModel
+from maf_e2e.config import Settings as SettingsModel
 
 
 def Settings(**kwargs: Any) -> SettingsModel:
@@ -45,15 +45,15 @@ def test_gemini_developer_api_settings() -> None:
 
 
 def test_gemini_requires_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("MAF_QA_GEMINI_API_KEY", raising=False)
-    with pytest.raises(ValidationError, match="MAF_QA_GEMINI_API_KEY"):
+    monkeypatch.delenv("MAF_E2E_GEMINI_API_KEY", raising=False)
+    with pytest.raises(ValidationError, match="MAF_E2E_GEMINI_API_KEY"):
         Settings(
             _env_file=None,
             model_provider="gemini",
             gemini_model="gemini-2.5-flash-lite",
         )
 
-    with pytest.raises(ValidationError, match="MAF_QA_GEMINI_API_KEY"):
+    with pytest.raises(ValidationError, match="MAF_E2E_GEMINI_API_KEY"):
         Settings(
             _env_file=None,
             model_provider="gemini",
@@ -94,7 +94,7 @@ def test_github_copilot_settings_with_explicit_token() -> None:
 def test_github_copilot_requires_token_when_gh_cli_disabled() -> None:
     with pytest.raises(
         ValidationError,
-        match="MAF_QA_GITHUB_COPILOT_TOKEN or MAF_QA_GITHUB_COPILOT_USE_GH_CLI_TOKEN=true",
+        match="MAF_E2E_GITHUB_COPILOT_TOKEN or MAF_E2E_GITHUB_COPILOT_USE_GH_CLI_TOKEN=true",
     ):
         Settings(
             _env_file=None,
@@ -105,7 +105,7 @@ def test_github_copilot_requires_token_when_gh_cli_disabled() -> None:
 
 
 def test_resilience_and_privacy_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("MAF_QA_SKILL_PATHS", "skills/one, skills/two")
+    monkeypatch.setenv("MAF_E2E_SKILL_PATHS", "skills/one, skills/two")
     settings = Settings(
         _env_file=None,
         azure_openai_endpoint="https://example.openai.azure.com",

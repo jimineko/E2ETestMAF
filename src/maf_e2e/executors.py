@@ -3,18 +3,20 @@ from typing import Any
 from agent_framework import AgentSession, Executor, WorkflowContext, handler, response_handler
 from pydantic import BaseModel
 
-from maf_qa.agents import AgentRunner, run_structured
-from maf_qa.middleware import (
+from maf_e2e.agents import AgentRunner, run_structured
+from maf_e2e.middleware import (
     classify_failure,
     exception_status_code,
     is_quota_error,
     is_transient_error,
 )
-from maf_qa.models import (
+from maf_e2e.models import (
     BrowserRunOutput,
     Decision,
     DiscoveryFindings,
     DiscoveryReport,
+    E2ETestReport,
+    E2ETestRequest,
     ExecutionResult,
     GeneratedPlan,
     HumanReviewRequest,
@@ -22,8 +24,6 @@ from maf_qa.models import (
     JudgeOutput,
     LiteralStatus,
     NextAction,
-    QAReport,
-    QARequest,
     QualityAssessment,
     RunContext,
     SafetyAssessment,
@@ -99,7 +99,7 @@ class OrchestratorExecutor(Executor):
         super().__init__(id="orchestrator")
 
     @handler
-    async def start(self, request: QARequest, ctx: WorkflowContext[RunContext]) -> None:
+    async def start(self, request: E2ETestRequest, ctx: WorkflowContext[RunContext]) -> None:
         await ctx.send_message(RunContext(request=request, run_id=request.run_id))
 
 
@@ -114,7 +114,7 @@ class DiscoveryExecutor(SessionExecutor):
             else message
         )
         review_history = message.review_history if isinstance(message, StageRetry) else []
-        prompt = f"""Explore this web application for QA planning.
+        prompt = f"""Explore this web application for E2E test planning.
 Target: {run.request.target_url}
 Objective: {run.request.objective}
 Policies: {run.request.policies or ["No additional policies"]}
@@ -445,7 +445,7 @@ class FinalizerExecutor(Executor):
         super().__init__(id="finalizer")
 
     @handler
-    async def finalize(self, action: NextAction, ctx: WorkflowContext[Any, QAReport]) -> None:
+    async def finalize(self, action: NextAction, ctx: WorkflowContext[Any, E2ETestReport]) -> None:
         request = action.run.request
         quality = action.quality
         safety = action.safety
@@ -464,7 +464,7 @@ class FinalizerExecutor(Executor):
             else LiteralStatus.FAILED
         )
         summary = _report_summary(action, status)
-        report = QAReport(
+        report = E2ETestReport(
             run_id=action.run.run_id,
             target_url=request.target_url,
             status=status,
@@ -532,7 +532,7 @@ def _report_summary(action: NextAction, status: LiteralStatus) -> str:
     if status == LiteralStatus.BLOCKED:
         return action.failure.message if action.failure is not None else "Human review required"
     if action.quality is None:
-        return "QA run did not produce a quality assessment"
+        return "E2E test run did not produce a quality assessment"
     if action.quality.result.passed:
         return action.quality.result.rationale
     return "; ".join(action.quality.result.defects) or action.quality.result.rationale

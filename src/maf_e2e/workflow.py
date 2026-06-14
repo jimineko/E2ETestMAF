@@ -6,8 +6,8 @@ from typing import Any
 
 from agent_framework import FileCheckpointStorage, Workflow, WorkflowBuilder
 
-from maf_qa.agents import AgentRunner
-from maf_qa.executors import (
+from maf_e2e.agents import AgentRunner
+from maf_e2e.executors import (
     BrowserExecutor,
     DecisionExecutor,
     DiscoveryExecutor,
@@ -18,7 +18,7 @@ from maf_qa.executors import (
     OrchestratorExecutor,
     SafetyExecutor,
 )
-from maf_qa.models import (
+from maf_e2e.models import (
     Decision,
     ExecutionResult,
     NextAction,
@@ -30,12 +30,12 @@ from maf_qa.models import (
 )
 
 CHECKPOINT_TYPES = [
-    f"maf_qa.models:{name}"
+    f"maf_e2e.models:{name}"
     for name in (
         "Severity",
         "Decision",
         "FailureKind",
-        "QARequest",
+        "E2ETestRequest",
         "RunContext",
         "StageFailure",
         "PageObservation",
@@ -58,7 +58,7 @@ CHECKPOINT_TYPES = [
         "HumanReviewRequest",
         "HumanReviewResponse",
         "StageRetry",
-        "QAReport",
+        "E2ETestReport",
     )
 ]
 
@@ -72,7 +72,7 @@ class AgentSet:
     safety: AgentRunner
 
 
-def build_qa_workflow(
+def build_e2e_test_workflow(
     agents: AgentSet,
     checkpoint_root: Path,
     *,
@@ -125,8 +125,10 @@ def build_qa_workflow(
     builder = (
         WorkflowBuilder(
             start_executor=orchestrator,
-            name="autonomous-web-qa-v2",
-            description="Discover, plan, execute, validate, refine, escalate, and report web QA.",
+            name="autonomous-e2e-test-v3",
+            description=(
+                "Discover, plan, execute, validate, refine, escalate, and report web E2E tests."
+            ),
             checkpoint_storage=storage,
             output_from=[finalizer],
             max_iterations=80,
@@ -202,8 +204,8 @@ def build_browser_resume_workflow(
     return (
         WorkflowBuilder(
             start_executor=browser,
-            name="autonomous-web-qa-v2-browser-resume",
-            description="Resume a saved QA plan from the browser stage with fresh resources.",
+            name="autonomous-e2e-test-v3-browser-resume",
+            description="Resume a saved E2E test plan from the browser stage with fresh resources.",
             checkpoint_storage=storage,
             output_from=[finalizer],
             max_iterations=80,
@@ -236,7 +238,7 @@ async def load_checkpoint_test_plan(
             checkpoints.append(previous)
             previous_id = previous.previous_checkpoint_id
     else:
-        checkpoints = await storage.list_checkpoints(workflow_name="autonomous-web-qa-v2")
+        checkpoints = await storage.list_checkpoints(workflow_name="autonomous-e2e-test-v3")
         checkpoints.sort(key=lambda item: item.timestamp, reverse=True)
 
     for checkpoint in checkpoints:

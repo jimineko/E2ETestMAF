@@ -1,6 +1,6 @@
 using './main.bicep'
 
-param prefix = 'mafqa-dev'
+param prefix = 'mafe2e-dev'
 param storageAccountName = 'mafqadevqastore'
 param azureOpenAIResourceId = '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-ai/providers/Microsoft.CognitiveServices/accounts/my-openai'
 param azureOpenAIEndpoint = 'https://my-openai.openai.azure.com'

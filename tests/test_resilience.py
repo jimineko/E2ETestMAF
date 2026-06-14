@@ -10,8 +10,8 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import BaseModel
 
-from maf_qa.agents import StructuredOutputError, run_structured
-from maf_qa.middleware import (
+from maf_e2e.agents import StructuredOutputError, run_structured
+from maf_e2e.middleware import (
     OBSERVABILITY_CONTEXT,
     ChatRetryMiddleware,
     ToolTelemetryMiddleware,
@@ -172,7 +172,7 @@ async def test_chat_middleware_retries_transient_errors(monkeypatch: pytest.Monk
     async def no_sleep(delay: float) -> None:
         del delay
 
-    monkeypatch.setattr("maf_qa.middleware.asyncio.sleep", no_sleep)
+    monkeypatch.setattr("maf_e2e.middleware.asyncio.sleep", no_sleep)
     middleware = ChatRetryMiddleware(stage="judge", max_retries=2)
     await middleware.process(ChatContext(object(), [], {}), call_next)  # type: ignore[arg-type]
     assert attempts == 3
@@ -234,7 +234,7 @@ async def test_spans_do_not_capture_message_or_tool_arguments(
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
-    monkeypatch.setattr("maf_qa.middleware.TRACER", provider.get_tracer("test"))
+    monkeypatch.setattr("maf_e2e.middleware.TRACER", provider.get_tracer("test"))
 
     async def call_next() -> None:
         return None

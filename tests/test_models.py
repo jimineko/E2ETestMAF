@@ -1,11 +1,11 @@
-from maf_qa.models import (
+from maf_e2e.models import (
     BrowserRunOutput,
     DiscoveryFindings,
     GeneratedPlan,
     LiteralStatus,
     StepResult,
 )
-from maf_qa.models import (
+from maf_e2e.models import (
     TestScenario as ScenarioModel,
 )
 

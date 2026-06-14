@@ -15,13 +15,13 @@ from agent_framework import (
 )
 from opentelemetry import trace
 
-from maf_qa.models import FailureKind
+from maf_e2e.models import FailureKind
 
 LOGGER = logging.getLogger(__name__)
-TRACER = trace.get_tracer("maf_qa")
+TRACER = trace.get_tracer("maf_e2e")
 TRANSIENT_STATUS_CODES = {408, 429, 500, 502, 503, 504}
 OBSERVABILITY_CONTEXT: ContextVar[dict[str, Any] | None] = ContextVar(
-    "maf_qa_observability_context", default=None
+    "maf_e2e_observability_context", default=None
 )
 
 
@@ -109,7 +109,7 @@ class ChatRetryMiddleware(ChatMiddleware):
             started = monotonic()
             try:
                 with TRACER.start_as_current_span(
-                    "maf_qa.model_call",
+                    "maf_e2e.model_call",
                     record_exception=False,
                     set_status_on_exception=False,
                 ) as span:
@@ -178,7 +178,7 @@ class ToolTelemetryMiddleware(FunctionMiddleware):
         finally:
             metadata = OBSERVABILITY_CONTEXT.get() or {}
             duration_ms = int((monotonic() - started) * 1000)
-            with TRACER.start_as_current_span("maf_qa.tool_call") as span:
+            with TRACER.start_as_current_span("maf_e2e.tool_call") as span:
                 _set_common_attributes(span, metadata, self.stage)
                 span.set_attribute("tool.name", name)
                 span.set_attribute("tool.success", success)

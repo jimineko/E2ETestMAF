@@ -4,9 +4,9 @@ import sys
 
 from agent_framework.devui import register_cleanup, serve
 
-from maf_qa.config import Settings
-from maf_qa.runtime import RuntimeResources
-from maf_qa.telemetry import configure_telemetry
+from maf_e2e.config import Settings
+from maf_e2e.runtime import RuntimeResources
+from maf_e2e.telemetry import configure_telemetry
 
 
 def main() -> None:

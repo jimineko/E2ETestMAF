@@ -1,1 +1,1 @@
-scripts/qa-compose text eol=lf
+scripts/e2e-compose text eol=lf

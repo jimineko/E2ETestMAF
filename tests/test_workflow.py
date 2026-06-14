@@ -5,30 +5,30 @@ from typing import Any
 
 from agent_framework import AgentResponse, AgentSession, FileCheckpointStorage
 
-from maf_qa.models import (
+from maf_e2e.models import (
     BrowserRunOutput,
     DiscoveryFindings,
+    E2ETestReport,
+    E2ETestRequest,
     GeneratedPlan,
     HumanReviewResponse,
     JudgeOutput,
     LiteralStatus,
     PageObservation,
     PolicyResult,
-    QAReport,
-    QARequest,
     SafetyOutput,
     SecurityFinding,
     Severity,
     StepResult,
 )
-from maf_qa.models import (
+from maf_e2e.models import (
     TestScenario as ScenarioModel,
 )
-from maf_qa.workflow import (
+from maf_e2e.workflow import (
     CHECKPOINT_TYPES,
     AgentSet,
     build_browser_resume_workflow,
-    build_qa_workflow,
+    build_e2e_test_workflow,
     load_checkpoint_test_plan,
 )
 
@@ -119,13 +119,13 @@ async def test_workflow_refines_once_then_completes(tmp_path: Path) -> None:
         ]
     )
     safety = FakeAgent([SafetyOutput(passed=True)])
-    workflow = build_qa_workflow(
+    workflow = build_e2e_test_workflow(
         AgentSet(discovery, generator, browser, judge, safety),
         tmp_path / "checkpoints",
     )
 
     result = await workflow.run(
-        QARequest(
+        E2ETestRequest(
             target_url="https://example.com",
             objective="Validate home",
             max_refinements=1,
@@ -134,7 +134,7 @@ async def test_workflow_refines_once_then_completes(tmp_path: Path) -> None:
 
     outputs = result.get_outputs()
     assert len(outputs) == 1
-    assert isinstance(outputs[0], QAReport)
+    assert isinstance(outputs[0], E2ETestReport)
     assert outputs[0].passed is True
     assert outputs[0].attempts == 2
     assert judge.calls == 2
@@ -144,7 +144,7 @@ async def test_workflow_refines_once_then_completes(tmp_path: Path) -> None:
         tmp_path / "checkpoints",
         allowed_checkpoint_types=CHECKPOINT_TYPES,
     )
-    checkpoints = await storage.list_checkpoints(workflow_name="autonomous-web-qa-v2")
+    checkpoints = await storage.list_checkpoints(workflow_name="autonomous-e2e-test-v3")
     assert checkpoints
 
 
@@ -160,14 +160,14 @@ async def test_retry_limit_produces_failed_report(tmp_path: Path) -> None:
             )
         ]
     )
-    workflow = build_qa_workflow(agents, tmp_path / "checkpoints")
+    workflow = build_e2e_test_workflow(agents, tmp_path / "checkpoints")
 
     result = await workflow.run(
-        QARequest(target_url="https://example.com", objective="Validate", max_refinements=0)
+        E2ETestRequest(target_url="https://example.com", objective="Validate", max_refinements=0)
     )
 
     report = result.get_outputs()[0]
-    assert isinstance(report, QAReport)
+    assert isinstance(report, E2ETestReport)
     assert report.status == LiteralStatus.FAILED
     assert report.passed is False
 
@@ -188,23 +188,27 @@ async def test_high_safety_finding_produces_blocked_report(tmp_path: Path) -> No
             )
         ]
     )
-    workflow = build_qa_workflow(agents, tmp_path / "checkpoints")
+    workflow = build_e2e_test_workflow(agents, tmp_path / "checkpoints")
 
-    result = await workflow.run(QARequest(target_url="https://example.com", objective="Validate"))
+    result = await workflow.run(
+        E2ETestRequest(target_url="https://example.com", objective="Validate")
+    )
 
     report = result.get_outputs()[0]
-    assert isinstance(report, QAReport)
+    assert isinstance(report, E2ETestReport)
     assert report.status == LiteralStatus.BLOCKED
 
 
 async def test_stage_failure_produces_blocked_report(tmp_path: Path) -> None:
     agents = _basic_agents(discovery_outputs=[TimeoutError("provider timed out")])
-    workflow = build_qa_workflow(agents, tmp_path / "checkpoints")
+    workflow = build_e2e_test_workflow(agents, tmp_path / "checkpoints")
 
-    result = await workflow.run(QARequest(target_url="https://example.com", objective="Validate"))
+    result = await workflow.run(
+        E2ETestRequest(target_url="https://example.com", objective="Validate")
+    )
 
     report = result.get_outputs()[0]
-    assert isinstance(report, QAReport)
+    assert isinstance(report, E2ETestReport)
     assert report.status == LiteralStatus.BLOCKED
     assert report.failures[0].exception_type == "TimeoutError"
     assert "provider timed out" not in report.failures[0].message
@@ -215,17 +219,19 @@ async def test_gemini_mode_keeps_discovery_tools_without_native_response_format(
 ) -> None:
     agents = _basic_agents()
     tool = object()
-    workflow = build_qa_workflow(
+    workflow = build_e2e_test_workflow(
         agents,
         tmp_path / "checkpoints",
         tools=[tool],
         use_native_response_format=False,
     )
 
-    result = await workflow.run(QARequest(target_url="https://example.com", objective="Validate"))
+    result = await workflow.run(
+        E2ETestRequest(target_url="https://example.com", objective="Validate")
+    )
 
     report = result.get_outputs()[0]
-    assert isinstance(report, QAReport)
+    assert isinstance(report, E2ETestReport)
     assert report.status == LiteralStatus.PASSED
     discovery = agents.discovery
     browser = agents.browser
@@ -253,8 +259,10 @@ async def test_devui_human_abort_resumes_to_blocked_report(tmp_path: Path) -> No
             )
         ]
     )
-    workflow = build_qa_workflow(agents, tmp_path / "checkpoints", interactive=True)
-    initial = await workflow.run(QARequest(target_url="https://example.com", objective="Validate"))
+    workflow = build_e2e_test_workflow(agents, tmp_path / "checkpoints", interactive=True)
+    initial = await workflow.run(
+        E2ETestRequest(target_url="https://example.com", objective="Validate")
+    )
     requests = initial.get_request_info_events()
 
     assert len(requests) == 1
@@ -262,7 +270,7 @@ async def test_devui_human_abort_resumes_to_blocked_report(tmp_path: Path) -> No
         responses={requests[0].request_id: HumanReviewResponse(action="abort", note="Reviewed")}
     )
     report = resumed.get_outputs()[0]
-    assert isinstance(report, QAReport)
+    assert isinstance(report, E2ETestReport)
     assert report.status == LiteralStatus.BLOCKED
     assert report.review_history[0].note == "Reviewed"
 
@@ -284,8 +292,10 @@ async def test_devui_human_retry_resumes_saved_stage_input(tmp_path: Path) -> No
             SafetyOutput(passed=True),
         ]
     )
-    workflow = build_qa_workflow(agents, tmp_path / "checkpoints", interactive=True)
-    initial = await workflow.run(QARequest(target_url="https://example.com", objective="Validate"))
+    workflow = build_e2e_test_workflow(agents, tmp_path / "checkpoints", interactive=True)
+    initial = await workflow.run(
+        E2ETestRequest(target_url="https://example.com", objective="Validate")
+    )
     request = initial.get_request_info_events()[0]
 
     resumed = await workflow.run(
@@ -293,16 +303,16 @@ async def test_devui_human_retry_resumes_saved_stage_input(tmp_path: Path) -> No
     )
 
     report = resumed.get_outputs()[0]
-    assert isinstance(report, QAReport)
+    assert isinstance(report, E2ETestReport)
     assert report.status == LiteralStatus.PASSED
     assert report.review_history[0].note == "Retry approved"
 
 
 async def test_sessions_are_isolated_between_runs(tmp_path: Path) -> None:
     agents = _basic_agents()
-    workflow = build_qa_workflow(agents, tmp_path / "checkpoints")
-    await workflow.run(QARequest(target_url="https://example.com", objective="First"))
-    await workflow.run(QARequest(target_url="https://example.com", objective="Second"))
+    workflow = build_e2e_test_workflow(agents, tmp_path / "checkpoints")
+    await workflow.run(E2ETestRequest(target_url="https://example.com", objective="First"))
+    await workflow.run(E2ETestRequest(target_url="https://example.com", objective="Second"))
 
     discovery = agents.discovery
     assert isinstance(discovery, FakeAgent)
@@ -312,8 +322,8 @@ async def test_sessions_are_isolated_between_runs(tmp_path: Path) -> None:
 async def test_checkpoint_resume_restarts_from_browser_with_fresh_agents(tmp_path: Path) -> None:
     checkpoint_root = tmp_path / "checkpoints"
     initial_agents = _basic_agents()
-    initial_workflow = build_qa_workflow(initial_agents, checkpoint_root)
-    request = QARequest(target_url="https://example.com", objective="Initial run")
+    initial_workflow = build_e2e_test_workflow(initial_agents, checkpoint_root)
+    request = E2ETestRequest(target_url="https://example.com", objective="Initial run")
     await initial_workflow.run(request)
 
     plan = await load_checkpoint_test_plan(checkpoint_root)
@@ -322,7 +332,7 @@ async def test_checkpoint_resume_restarts_from_browser_with_fresh_agents(tmp_pat
     result = await resumed_workflow.run(plan)
 
     report = result.get_outputs()[0]
-    assert isinstance(report, QAReport)
+    assert isinstance(report, E2ETestReport)
     assert report.run_id == request.run_id
     discovery = resumed_agents.discovery
     browser = resumed_agents.browser

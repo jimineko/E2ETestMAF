@@ -7,18 +7,18 @@ from agent_framework.openai import OpenAIChatClient, OpenAIChatCompletionClient
 from agent_framework_gemini import GeminiChatClient
 from azure.identity.aio import DefaultAzureCredential
 
-from maf_qa.agent_config import load_agent_set
-from maf_qa.config import Settings as SettingsModel
-from maf_qa.runtime import (
+from maf_e2e.agent_config import load_agent_set
+from maf_e2e.config import Settings as SettingsModel
+from maf_e2e.runtime import (
     _resolve_github_copilot_token as resolve_github_copilot_token,
 )
-from maf_qa.runtime import (
+from maf_e2e.runtime import (
     _sanitize_mcp_function_schemas as sanitize_mcp_function_schemas,
 )
-from maf_qa.runtime import (
+from maf_e2e.runtime import (
     _strip_json_schema_dialect as strip_json_schema_dialect,
 )
-from maf_qa.runtime import build_chat_client
+from maf_e2e.runtime import build_chat_client
 
 
 def Settings(**kwargs: Any) -> SettingsModel:
@@ -93,7 +93,7 @@ def test_resolves_github_copilot_token_from_gh_cli(monkeypatch: Any) -> None:
             stdout="gho_cli\n",
         )
 
-    monkeypatch.setattr("maf_qa.runtime.subprocess.run", fake_run)
+    monkeypatch.setattr("maf_e2e.runtime.subprocess.run", fake_run)
 
     assert resolve_github_copilot_token(settings) == "gho_cli"
 

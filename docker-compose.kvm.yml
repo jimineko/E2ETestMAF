@@ -1,6 +1,6 @@
 services:
-  qa:
+  e2e:
     devices:
       - /dev/kvm:/dev/kvm
     group_add:
-      - "${MAF_QA_KVM_GID}"
+      - "${MAF_E2E_KVM_GID}"

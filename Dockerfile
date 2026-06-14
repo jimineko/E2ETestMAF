@@ -30,4 +30,4 @@ RUN groupadd --gid 10001 mafqa \
 
 USER mafqa
 
-CMD ["maf-qa"]
+CMD ["maf-e2e"]

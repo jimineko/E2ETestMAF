@@ -1,5 +1,5 @@
 {
-  "name": "maf-playwright-qa-runtime",
+  "name": "maf-playwright-e2e-runtime",
   "private": true,
   "version": "0.1.0",
   "dependencies": {

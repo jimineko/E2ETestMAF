@@ -18,7 +18,7 @@ param azureOpenAIDeployment string
 @description('Web application URL to test.')
 param targetUrl string
 
-@description('QA objective passed to the scheduled container.')
+@description('E2E testing objective passed to the scheduled container.')
 param objective string = 'Validate the critical user journey and report regressions.'
 
 @description('UTC time used by the systemd timer.')
@@ -41,17 +41,17 @@ param vmSize string = 'Standard_D2s_v5'
 @description('Administrative username for the private VM.')
 param adminUsername string = 'azureuser'
 
-var identityName = '${prefix}-qa-id'
-var vmName = '${prefix}-qa-vm'
-var nicName = '${prefix}-qa-nic'
-var vnetName = '${prefix}-qa-vnet'
-var natName = '${prefix}-qa-nat'
-var natPublicIpName = '${prefix}-qa-nat-pip'
+var identityName = '${prefix}-e2e-id'
+var vmName = '${prefix}-e2e-vm'
+var nicName = '${prefix}-e2e-nic'
+var vnetName = '${prefix}-e2e-vnet'
+var natName = '${prefix}-e2e-nat'
+var natPublicIpName = '${prefix}-e2e-nat-pip'
 var acrName = toLower(replace('${prefix}qaacr', '-', ''))
-var workspaceName = '${prefix}-qa-law'
-var appInsightsName = '${prefix}-qa-ai'
+var workspaceName = '${prefix}-e2e-law'
+var appInsightsName = '${prefix}-e2e-ai'
 var azureOpenAIIdParts = split(azureOpenAIResourceId, '/')
-var imageName = '${acr.properties.loginServer}/maf-playwright-qa:${imageTag}'
+var imageName = '${acr.properties.loginServer}/maf-playwright-e2e:${imageTag}'
 
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: identityName
@@ -110,7 +110,7 @@ resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01'
 
 resource artifactContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
   parent: blobService
-  name: 'qa-artifacts'
+  name: 'e2e-artifacts'
   properties: {
     publicAccess: 'None'
   }
@@ -187,29 +187,29 @@ packages:
   - curl
   - ca-certificates
 write_files:
-  - path: /etc/maf-qa.env
+  - path: /etc/maf-e2e.env
     permissions: '0600'
     content: |
       AZURE_CLIENT_ID={0}
-      MAF_QA_MODEL_PROVIDER=azure_openai
-      MAF_QA_AZURE_OPENAI_ENDPOINT={1}
-      MAF_QA_AZURE_OPENAI_DEPLOYMENT={2}
-      MAF_QA_TARGET_URL={3}
-      MAF_QA_OBJECTIVE={4}
-      MAF_QA_BLOB_ACCOUNT_URL=https://{5}.blob.{6}
-      MAF_QA_BLOB_CONTAINER={7}
-      MAF_QA_APPLICATIONINSIGHTS_CONNECTION_STRING={8}
-      MAF_QA_CODEACT_MODE=required
-      MAF_QA_CODEACT_REQUIRE_KVM=true
-      MAF_QA_CODEACT_ALLOW_FILE_UPLOAD=false
-      MAF_QA_CODEACT_ALLOW_DESTRUCTIVE_ACTIONS=false
-      MAF_QA_PLAYWRIGHT_HEADLESS=true
-      MAF_QA_PLAYWRIGHT_ALLOWED_ORIGINS={3}
-  - path: /etc/systemd/system/maf-qa.service
+      MAF_E2E_MODEL_PROVIDER=azure_openai
+      MAF_E2E_AZURE_OPENAI_ENDPOINT={1}
+      MAF_E2E_AZURE_OPENAI_DEPLOYMENT={2}
+      MAF_E2E_TARGET_URL={3}
+      MAF_E2E_OBJECTIVE={4}
+      MAF_E2E_BLOB_ACCOUNT_URL=https://{5}.blob.{6}
+      MAF_E2E_BLOB_CONTAINER={7}
+      MAF_E2E_APPLICATIONINSIGHTS_CONNECTION_STRING={8}
+      MAF_E2E_CODEACT_MODE=required
+      MAF_E2E_CODEACT_REQUIRE_KVM=true
+      MAF_E2E_CODEACT_ALLOW_FILE_UPLOAD=false
+      MAF_E2E_CODEACT_ALLOW_DESTRUCTIVE_ACTIONS=false
+      MAF_E2E_PLAYWRIGHT_HEADLESS=true
+      MAF_E2E_PLAYWRIGHT_ALLOWED_ORIGINS={3}
+  - path: /etc/systemd/system/maf-e2e.service
     permissions: '0644'
     content: |
       [Unit]
-      Description=MAF Hyperlight autonomous QA
+      Description=MAF Hyperlight autonomous E2E testing
       After=docker.service network-online.target
       Requires=docker.service
 
@@ -217,14 +217,14 @@ write_files:
       Type=oneshot
       ExecStartPre=/usr/bin/az login --identity --username {0}
       ExecStartPre=/usr/bin/az acr login --name {9}
-      ExecStartPre=-/usr/bin/docker rm -f maf-qa
-      ExecStart=/usr/bin/docker run --rm --name maf-qa --device=/dev/kvm:/dev/kvm --env-file /etc/maf-qa.env -v /var/lib/maf-qa/artifacts:/app/artifacts -v /var/lib/maf-qa/checkpoints:/app/checkpoints {10}
+      ExecStartPre=-/usr/bin/docker rm -f maf-e2e
+      ExecStart=/usr/bin/docker run --rm --name maf-e2e --device=/dev/kvm:/dev/kvm --env-file /etc/maf-e2e.env -v /var/lib/maf-e2e/artifacts:/app/artifacts -v /var/lib/maf-e2e/checkpoints:/app/checkpoints {10}
       TimeoutStartSec=2h
-  - path: /etc/systemd/system/maf-qa.timer
+  - path: /etc/systemd/system/maf-e2e.timer
     permissions: '0644'
     content: |
       [Unit]
-      Description=Run MAF QA on schedule
+      Description=Run MAF E2E testing on schedule
 
       [Timer]
       OnCalendar={11}
@@ -235,11 +235,11 @@ write_files:
       WantedBy=timers.target
 runcmd:
   - [bash, -lc, 'curl -sL https://aka.ms/InstallAzureCLIDeb | bash']
-  - [bash, -lc, 'mkdir -p /var/lib/maf-qa/artifacts /var/lib/maf-qa/checkpoints']
+  - [bash, -lc, 'mkdir -p /var/lib/maf-e2e/artifacts /var/lib/maf-e2e/checkpoints']
   - [bash, -lc, 'test -e /dev/kvm']
   - [systemctl, enable, --now, docker]
   - [systemctl, daemon-reload]
-  - [systemctl, enable, --now, maf-qa.timer]
+  - [systemctl, enable, --now, maf-e2e.timer]
 ''', identity.properties.clientId, azureOpenAIEndpoint, azureOpenAIDeployment, targetUrl, objective, storage.name, az.environment().suffixes.storage, artifactContainer.name, appInsights.properties.ConnectionString, acr.name, imageName, timerOnCalendar)
 
 resource vm 'Microsoft.Compute/virtualMachines@2024-07-01' = {

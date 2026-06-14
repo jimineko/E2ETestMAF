@@ -13,26 +13,26 @@ from agent_framework.openai import OpenAIChatClient, OpenAIChatCompletionClient
 from agent_framework_gemini import GeminiChatClient
 from azure.identity.aio import DefaultAzureCredential
 
-from maf_qa.agent_config import load_agent_set
-from maf_qa.artifacts import archive_run, blob_uri, upload_artifacts
-from maf_qa.codeact import (
+from maf_e2e.agent_config import load_agent_set
+from maf_e2e.artifacts import archive_run, blob_uri, upload_artifacts
+from maf_e2e.codeact import (
     CodeActUnavailable,
     ToolAuditLog,
     build_codeact_provider,
     normalize_origin,
     preflight_hyperlight,
 )
-from maf_qa.config import Settings
-from maf_qa.models import (
+from maf_e2e.config import Settings
+from maf_e2e.models import (
+    E2ETestReport,
+    E2ETestRequest,
     FailureKind,
     LiteralStatus,
-    QAReport,
-    QARequest,
     RunContext,
     StageFailure,
     TestPlan,
 )
-from maf_qa.workflow import AgentSet, build_browser_resume_workflow, build_qa_workflow
+from maf_e2e.workflow import AgentSet, build_browser_resume_workflow, build_e2e_test_workflow
 
 PLAYWRIGHT_ALLOWED_TOOLS = {
     "browser_click",
@@ -186,7 +186,7 @@ class RuntimeResources:
         self.codeact_active = True
 
     def workflow(self, *, checkpoint_root: Path, interactive: bool) -> Any:
-        return build_qa_workflow(
+        return build_e2e_test_workflow(
             self.agents,
             checkpoint_root,
             tools=None if self.codeact_active else [self.mcp],
@@ -218,13 +218,13 @@ class RuntimeResources:
             await self.credential.close()
 
 
-class QARuntime:
-    def __init__(self, settings: Settings, request: QARequest) -> None:
+class E2ETestRuntime:
+    def __init__(self, settings: Settings, request: E2ETestRequest) -> None:
         self.settings = settings
         self.request = request
         self.resources = RuntimeResources(settings, request.run_id, target_url=request.target_url)
 
-    async def __aenter__(self) -> QARuntime:
+    async def __aenter__(self) -> E2ETestRuntime:
         await self.resources.start()
         return self
 
@@ -236,7 +236,7 @@ class QARuntime:
     ) -> None:
         await self.resources.close()
 
-    async def run(self, *, resume_plan: TestPlan | None = None) -> QAReport:
+    async def run(self, *, resume_plan: TestPlan | None = None) -> E2ETestReport:
         if self.settings.codeact_mode == "required" and self.resources.codeact_error is not None:
             report = _codeact_blocked_report(self.request, self.resources.codeact_error)
             return await self._persist_report(report)
@@ -250,12 +250,12 @@ class QARuntime:
             workflow = self.resources.browser_resume_workflow(checkpoint_root=checkpoint_root)
             result = await workflow.run(resume_plan)
         outputs = result.get_outputs()
-        if len(outputs) != 1 or not isinstance(outputs[0], QAReport):
+        if len(outputs) != 1 or not isinstance(outputs[0], E2ETestReport):
             raise RuntimeError(f"Workflow returned unexpected outputs: {outputs!r}")
 
         return await self._persist_report(outputs[0])
 
-    async def _persist_report(self, report: QAReport) -> QAReport:
+    async def _persist_report(self, report: E2ETestReport) -> E2ETestReport:
         run_dir = self.resources.run_dir
         report_path = run_dir / "report.json"
         audit_path = run_dir / "tool-audit.json"
@@ -307,9 +307,9 @@ class QARuntime:
 
 
 async def execute(
-    settings: Settings, request: QARequest, *, resume_plan: TestPlan | None = None
-) -> QAReport:
-    async with QARuntime(settings, request) as runtime:
+    settings: Settings, request: E2ETestRequest, *, resume_plan: TestPlan | None = None
+) -> E2ETestReport:
+    async with E2ETestRuntime(settings, request) as runtime:
         return await runtime.run(resume_plan=resume_plan)
 
 
@@ -323,7 +323,7 @@ def _agent_config_dir(configured: Path) -> Path:
     return configured
 
 
-def _codeact_blocked_report(request: QARequest, exc: CodeActUnavailable) -> QAReport:
+def _codeact_blocked_report(request: E2ETestRequest, exc: CodeActUnavailable) -> E2ETestReport:
     run = RunContext(request=request, run_id=request.run_id)
     failure = StageFailure(
         run=run,
@@ -333,10 +333,10 @@ def _codeact_blocked_report(request: QARequest, exc: CodeActUnavailable) -> QARe
         exception_type=type(exc).__name__,
         message="CodeAct runtime is unavailable on this execution host",
         retryable=False,
-        input_type="QARequest",
+        input_type="E2ETestRequest",
         stage_input=request.model_dump(mode="json"),
     )
-    return QAReport(
+    return E2ETestReport(
         run_id=request.run_id,
         target_url=request.target_url,
         status=LiteralStatus.BLOCKED,
@@ -357,8 +357,8 @@ def _resolve_github_copilot_token(settings: Settings) -> str:
             return explicit
     if not settings.github_copilot_use_gh_cli_token:
         raise RuntimeError(
-            "GitHub Copilot requires MAF_QA_GITHUB_COPILOT_TOKEN or "
-            "MAF_QA_GITHUB_COPILOT_USE_GH_CLI_TOKEN=true"
+            "GitHub Copilot requires MAF_E2E_GITHUB_COPILOT_TOKEN or "
+            "MAF_E2E_GITHUB_COPILOT_USE_GH_CLI_TOKEN=true"
         )
     try:
         result = subprocess.run(
@@ -370,18 +370,18 @@ def _resolve_github_copilot_token(settings: Settings) -> str:
     except FileNotFoundError as exc:
         raise RuntimeError(
             "GitHub Copilot auth fallback requires gh CLI. Install gh or set "
-            "MAF_QA_GITHUB_COPILOT_TOKEN."
+            "MAF_E2E_GITHUB_COPILOT_TOKEN."
         ) from exc
     except subprocess.CalledProcessError as exc:
         raise RuntimeError(
             "Unable to resolve GitHub token from `gh auth token`. Run `gh auth login` or set "
-            "MAF_QA_GITHUB_COPILOT_TOKEN."
+            "MAF_E2E_GITHUB_COPILOT_TOKEN."
         ) from exc
     token = result.stdout.strip()
     if not token:
         raise RuntimeError(
             "gh auth token returned an empty token. Re-authenticate with `gh auth login` "
-            "or set MAF_QA_GITHUB_COPILOT_TOKEN."
+            "or set MAF_E2E_GITHUB_COPILOT_TOKEN."
         )
     return token
 

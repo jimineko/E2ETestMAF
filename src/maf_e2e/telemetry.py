@@ -9,7 +9,7 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter
 
-from maf_qa.config import Settings
+from maf_e2e.config import Settings
 
 
 def configure_telemetry(settings: Settings) -> None:
@@ -17,7 +17,7 @@ def configure_telemetry(settings: Settings) -> None:
         level=getattr(logging, settings.log_level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    provider = TracerProvider(resource=Resource.create({"service.name": "maf-playwright-qa"}))
+    provider = TracerProvider(resource=Resource.create({"service.name": "maf-playwright-e2e"}))
     exporter_factory = _exporter_factory(settings)
     if exporter_factory is not None:
         provider.add_span_processor(BatchSpanProcessor(exporter_factory()))

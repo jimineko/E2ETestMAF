@@ -20,9 +20,9 @@ compose_setting() {
   printf '%s\n' "$COMPOSE_ENVIRONMENT" | awk -F= -v key="$key" '$1 == key {sub(/^[^=]*=/, ""); print; exit}'
 }
 
-KVM_MODE=${MAF_QA_COMPOSE_KVM:-$(compose_setting MAF_QA_COMPOSE_KVM)}
+KVM_MODE=${MAF_E2E_COMPOSE_KVM:-$(compose_setting MAF_E2E_COMPOSE_KVM)}
 KVM_MODE=${KVM_MODE:-auto}
-CODEACT_MODE=${MAF_QA_CODEACT_MODE:-$(compose_setting MAF_QA_CODEACT_MODE)}
+CODEACT_MODE=${MAF_E2E_CODEACT_MODE:-$(compose_setting MAF_E2E_CODEACT_MODE)}
 CODEACT_MODE=${CODEACT_MODE:-auto}
 KVM_AVAILABLE=false
 KVM_REASON="host is not Linux x86_64"
@@ -30,7 +30,7 @@ KVM_REASON="host is not Linux x86_64"
 case "$KVM_MODE" in
   auto|required|disabled) ;;
   *)
-    echo "error: MAF_QA_COMPOSE_KVM must be auto, required, or disabled" >&2
+    echo "error: MAF_E2E_COMPOSE_KVM must be auto, required, or disabled" >&2
     exit 2
     ;;
 esac
@@ -55,23 +55,23 @@ if [[ "$KVM_MODE" != "disabled" && "$(uname -s)" == "Linux" && "$(uname -m)" == 
 fi
 
 if [[ "$KVM_AVAILABLE" == "true" ]]; then
-  MAF_QA_KVM_GID=$(stat -c '%g' /dev/kvm)
-  export MAF_QA_KVM_GID
+  MAF_E2E_KVM_GID=$(stat -c '%g' /dev/kvm)
+  export MAF_E2E_KVM_GID
   COMPOSE+=(-f docker-compose.kvm.yml)
   echo "Compose runtime: Hyperlight enabled ($KVM_REASON)." >&2
 else
   if [[ "$KVM_MODE" == "required" || "$CODEACT_MODE" == "required" ]]; then
     echo "error: Hyperlight was required, but $KVM_REASON." >&2
-    echo "Use Linux x86_64/WSL2 with KVM, or set MAF_QA_CODEACT_MODE=auto." >&2
+    echo "Use Linux x86_64/WSL2 with KVM, or set MAF_E2E_CODEACT_MODE=auto." >&2
     exit 2
   fi
   echo "Compose runtime: direct MCP fallback ($KVM_REASON)." >&2
 fi
 
 if (( $# > 0 )); then
-  COMMAND_OVERRIDE=$(mktemp "${TMPDIR:-/tmp}/maf-qa-compose.XXXXXX.yml")
+  COMMAND_OVERRIDE=$(mktemp "${TMPDIR:-/tmp}/maf-e2e-compose.XXXXXX.yml")
   {
-    printf 'services:\n  qa:\n    command:\n      - maf-qa\n'
+    printf 'services:\n  e2e:\n    command:\n      - maf-e2e\n'
     for argument in "$@"; do
       if [[ "$argument" == *$'\n'* || "$argument" == *$'\r'* ]]; then
         echo "error: Compose CLI arguments cannot contain newlines" >&2
@@ -85,12 +85,12 @@ if (( $# > 0 )); then
 fi
 
 set +e
-"${COMPOSE[@]}" up --build --abort-on-container-exit --exit-code-from qa
+"${COMPOSE[@]}" up --build --abort-on-container-exit --exit-code-from e2e
 exit_code=$?
 set -e
 
 mkdir -p artifacts checkpoints
-"${COMPOSE[@]}" cp qa:/app/artifacts/. artifacts/ >/dev/null 2>&1 || true
-"${COMPOSE[@]}" cp qa:/app/checkpoints/. checkpoints/ >/dev/null 2>&1 || true
+"${COMPOSE[@]}" cp e2e:/app/artifacts/. artifacts/ >/dev/null 2>&1 || true
+"${COMPOSE[@]}" cp e2e:/app/checkpoints/. checkpoints/ >/dev/null 2>&1 || true
 "${COMPOSE[@]}" down --remove-orphans >/dev/null 2>&1 || true
 exit "$exit_code"

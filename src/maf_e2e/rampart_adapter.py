@@ -10,14 +10,14 @@ from rampart.core.manifest import AppManifest, DataSource, ToolDeclaration
 from rampart.core.types import ObservabilityLevel, Request, Response, ToolCall
 from rampart.reporting.sink import TestRunReport
 
-from maf_qa.artifacts import upload_artifacts
-from maf_qa.codeact import normalize_origin
-from maf_qa.config import Settings
-from maf_qa.models import QARequest
-from maf_qa.runtime import QARuntime
+from maf_e2e.artifacts import upload_artifacts
+from maf_e2e.codeact import normalize_origin
+from maf_e2e.config import Settings
+from maf_e2e.models import E2ETestRequest
+from maf_e2e.runtime import E2ETestRuntime
 
 
-class MAFQARampartSession:
+class MAFE2ERampartSession:
     def __init__(
         self,
         *,
@@ -29,7 +29,7 @@ class MAFQARampartSession:
         self.target_url = target_url
         self.allowed_origins = allowed_origins
 
-    async def __aenter__(self) -> MAFQARampartSession:
+    async def __aenter__(self) -> MAFE2ERampartSession:
         return self
 
     async def __aexit__(
@@ -45,7 +45,7 @@ class MAFQARampartSession:
         if target_origin not in self.allowed_origins:
             raise ValueError(f"RAMPART target origin is not allowlisted: {target_origin}")
         if self.settings.codeact_mode != "required":
-            raise ValueError("RAMPART sessions require MAF_QA_CODEACT_MODE=required")
+            raise ValueError("RAMPART sessions require MAF_E2E_CODEACT_MODE=required")
 
         attachment_text = "\n".join(payload.content for payload in request.attachments)
         objective = request.prompt or "Inspect the target application safely."
@@ -54,7 +54,7 @@ class MAFQARampartSession:
                 f"{objective}\n\nUntrusted content supplied for safety evaluation:\n"
                 f"{attachment_text}"
             )
-        qa_request = QARequest(
+        e2e_test_request = E2ETestRequest(
             target_url=self.target_url,
             objective=objective,
             policies=[
@@ -65,7 +65,7 @@ class MAFQARampartSession:
             ],
             max_refinements=0,
         )
-        async with QARuntime(self.settings, qa_request) as runtime:
+        async with E2ETestRuntime(self.settings, e2e_test_request) as runtime:
             report = await runtime.run()
             successful_events = [
                 event for event in runtime.resources.audit_log.events if event.success
@@ -102,7 +102,7 @@ class MAFQARampartSession:
         )
 
 
-class MAFQARampartAdapter:
+class MAFE2ERampartAdapter:
     def __init__(
         self,
         *,
@@ -114,8 +114,8 @@ class MAFQARampartAdapter:
         self.target_url = target_url
         self.allowed_origins = {normalize_origin(origin) for origin in allowed_origins}
 
-    async def create_session_async(self) -> MAFQARampartSession:
-        return MAFQARampartSession(
+    async def create_session_async(self) -> MAFE2ERampartSession:
+        return MAFE2ERampartSession(
             settings=self.settings,
             target_url=self.target_url,
             allowed_origins=self.allowed_origins,
@@ -125,7 +125,7 @@ class MAFQARampartAdapter:
     def manifest(self) -> AppManifest:
         return AppManifest(
             name="E2ETestMAF",
-            description="Sandboxed autonomous browser QA workflow.",
+            description="Sandboxed autonomous browser E2E testing workflow.",
             tools=[
                 ToolDeclaration(name="browser_navigate"),
                 ToolDeclaration(name="browser_click"),

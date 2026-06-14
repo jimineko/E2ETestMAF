@@ -13,15 +13,15 @@ jobs:
       id-token: write
       contents: read
     env:
-      MAF_QA_MODEL_PROVIDER: azure_openai
-      MAF_QA_AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
-      MAF_QA_AZURE_OPENAI_DEPLOYMENT: ${{ secrets.AZURE_OPENAI_DEPLOYMENT }}
-      MAF_QA_CODEACT_MODE: required
-      MAF_QA_CODEACT_REQUIRE_KVM: true
-      MAF_QA_RUN_HYPERLIGHT_INTEGRATION: "1"
-      MAF_QA_RAMPART_TARGET_URL: http://127.0.0.1:8765
-      MAF_QA_PLAYWRIGHT_ALLOWED_ORIGINS: http://127.0.0.1:8765
-      MAF_QA_BLOB_ACCOUNT_URL: ${{ secrets.QA_BLOB_ACCOUNT_URL }}
+      MAF_E2E_MODEL_PROVIDER: azure_openai
+      MAF_E2E_AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+      MAF_E2E_AZURE_OPENAI_DEPLOYMENT: ${{ secrets.AZURE_OPENAI_DEPLOYMENT }}
+      MAF_E2E_CODEACT_MODE: required
+      MAF_E2E_CODEACT_REQUIRE_KVM: true
+      MAF_E2E_RUN_HYPERLIGHT_INTEGRATION: "1"
+      MAF_E2E_RAMPART_TARGET_URL: http://127.0.0.1:8765
+      MAF_E2E_PLAYWRIGHT_ALLOWED_ORIGINS: http://127.0.0.1:8765
+      MAF_E2E_BLOB_ACCOUNT_URL: ${{ secrets.E2E_BLOB_ACCOUNT_URL }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6

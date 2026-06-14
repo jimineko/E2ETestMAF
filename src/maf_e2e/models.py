@@ -23,7 +23,7 @@ class Decision(StrEnum):
     ESCALATE = "escalate"
 
 
-class QARequest(BaseModel):
+class E2ETestRequest(BaseModel):
     run_id: str = Field(default_factory=lambda: uuid4().hex)
     target_url: str
     objective: str
@@ -40,7 +40,7 @@ class QARequest(BaseModel):
 
 
 class RunContext(BaseModel):
-    request: QARequest
+    request: E2ETestRequest
     run_id: str
     started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
@@ -213,7 +213,7 @@ class StageRetry(BaseModel):
     review_history: list[HumanReviewResponse] = Field(default_factory=list)
 
 
-class QAReport(BaseModel):
+class E2ETestReport(BaseModel):
     run_id: str
     target_url: str
     status: LiteralStatus

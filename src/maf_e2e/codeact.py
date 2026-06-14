@@ -24,7 +24,7 @@ from agent_framework import (
 )
 from agent_framework_hyperlight import HyperlightCodeActProvider
 
-from maf_qa.middleware import OBSERVABILITY_CONTEXT
+from maf_e2e.middleware import OBSERVABILITY_CONTEXT
 
 DISCOVERY_TOOL_NAMES = {
     "browser_close",

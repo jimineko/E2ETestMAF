@@ -3,9 +3,9 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-name = "maf-playwright-qa"
+name = "maf-playwright-e2e"
 version = "0.1.0"
-description = "Autonomous web QA workflow built with Microsoft Agent Framework and Playwright MCP"
+description = "Autonomous web E2E testing built with Microsoft Agent Framework and Playwright MCP"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
 dependencies = [
@@ -43,14 +43,14 @@ dev = [
 ]
 
 [project.scripts]
-maf-qa = "maf_qa.cli:main"
-maf-qa-devui = "maf_qa.devui:main"
+maf-e2e = "maf_e2e.cli:main"
+maf-e2e-devui = "maf_e2e.devui:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/maf_qa"]
+packages = ["src/maf_e2e"]
 
 [tool.hatch.build.targets.wheel.force-include]
-"agents" = "maf_qa/agent_definitions"
+"agents" = "maf_e2e/agent_definitions"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -70,7 +70,7 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 [tool.mypy]
 python_version = "3.13"
 strict = true
-packages = ["maf_qa"]
+packages = ["maf_e2e"]
 
 [[tool.mypy.overrides]]
 module = ["azure.monitor.*"]

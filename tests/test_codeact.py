@@ -7,14 +7,14 @@ from typing import Any
 import pytest
 from agent_framework import FunctionInvocationContext, FunctionTool
 
-from maf_qa.codeact import (
+from maf_e2e.codeact import (
     CodeActPolicyError,
     CodeActPolicyMiddleware,
     ToolAuditLog,
     build_codeact_provider,
     validate_codeact_program,
 )
-from maf_qa.middleware import OBSERVABILITY_CONTEXT
+from maf_e2e.middleware import OBSERVABILITY_CONTEXT
 
 
 def _function(name: str, calls: list[dict[str, Any]]) -> FunctionTool:
