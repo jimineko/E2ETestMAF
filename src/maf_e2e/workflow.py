@@ -77,6 +77,8 @@ def build_e2e_test_workflow(
     checkpoint_root: Path,
     *,
     tools: list[Any] | None = None,
+    discovery_tools: list[Any] | None = None,
+    browser_tools: list[Any] | None = None,
     structured_retries: int = 1,
     use_native_response_format: bool = True,
     interactive: bool = False,
@@ -86,7 +88,7 @@ def build_e2e_test_workflow(
         "discovery",
         agents.discovery,
         structured_retries=structured_retries,
-        tools=tools,
+        tools=discovery_tools if discovery_tools is not None else tools,
         use_native_response_format=use_native_response_format,
     )
     generator = GeneratorExecutor(
@@ -99,7 +101,7 @@ def build_e2e_test_workflow(
         "browser",
         agents.browser,
         structured_retries=structured_retries,
-        tools=tools,
+        tools=browser_tools if browser_tools is not None else tools,
         use_native_response_format=use_native_response_format,
     )
     judge = JudgeExecutor(
@@ -166,6 +168,7 @@ def build_browser_resume_workflow(
     checkpoint_root: Path,
     *,
     tools: list[Any] | None = None,
+    browser_tools: list[Any] | None = None,
     structured_retries: int = 1,
     use_native_response_format: bool = True,
 ) -> Workflow:
@@ -179,7 +182,7 @@ def build_browser_resume_workflow(
         "browser",
         agents.browser,
         structured_retries=structured_retries,
-        tools=tools,
+        tools=browser_tools if browser_tools is not None else tools,
         use_native_response_format=use_native_response_format,
     )
     judge = JudgeExecutor(

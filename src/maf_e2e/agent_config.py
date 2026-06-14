@@ -48,17 +48,31 @@ def load_agent_set(
     trace_content: bool = False,
     tool_middleware: FunctionMiddleware | None = None,
 ) -> AgentSet:
-    definitions = [_load_definition(config_dir / filename) for filename in AGENT_FILES.values()]
-    names = [str(definition.get("name", "")) for definition in definitions]
-    if len(set(names)) != len(names):
-        raise ValueError("Agent YAML names must be unique")
-    if set(names) != EXPECTED_NAMES:
-        raise ValueError(f"Agent YAML names must be exactly {sorted(EXPECTED_NAMES)}")
+    definitions = load_agent_definitions(config_dir)
+    return build_chat_agent_set(
+        definitions,
+        client,
+        skill_paths=skill_paths,
+        model_retries=model_retries,
+        trace_content=trace_content,
+        tool_middleware=tool_middleware,
+    )
+
+
+def build_chat_agent_set(
+    definitions: dict[str, dict[str, Any]],
+    client: SupportsChatGetResponse[Any],
+    *,
+    skill_paths: list[Path],
+    model_retries: int,
+    trace_content: bool = False,
+    tool_middleware: FunctionMiddleware | None = None,
+) -> AgentSet:
 
     factory = AgentFactory(client=client, safe_mode=True)
     skills = _load_skills(skill_paths)
     agents: dict[str, Agent] = {}
-    for (role, _filename), definition in zip(AGENT_FILES.items(), definitions, strict=True):
+    for role, definition in definitions.items():
         agent = factory.create_agent_from_dict(definition)
         middleware: list[Any] = [
             ChatRetryMiddleware(
@@ -76,6 +90,22 @@ def load_agent_set(
             agent.context_providers.append(skills)
         agents[role] = agent
     return AgentSet(**agents)
+
+
+def load_agent_definitions(config_dir: Path) -> dict[str, dict[str, Any]]:
+    definitions = {
+        role: _load_definition(config_dir / filename) for role, filename in AGENT_FILES.items()
+    }
+    names = [str(definition.get("name", "")) for definition in definitions.values()]
+    if len(set(names)) != len(names):
+        raise ValueError("Agent YAML names must be unique")
+    if set(names) != EXPECTED_NAMES:
+        raise ValueError(f"Agent YAML names must be exactly {sorted(EXPECTED_NAMES)}")
+    return definitions
+
+
+def load_skills(paths: list[Path]) -> SkillsProvider | None:
+    return _load_skills(paths)
 
 
 def _load_definition(path: Path) -> dict[str, Any]:

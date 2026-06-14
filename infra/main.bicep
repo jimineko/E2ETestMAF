@@ -191,7 +191,9 @@ write_files:
     permissions: '0600'
     content: |
       AZURE_CLIENT_ID={0}
+      MAF_E2E_RUNTIME_ENVIRONMENT=azure
       MAF_E2E_MODEL_PROVIDER=azure_openai
+      MAF_E2E_MODEL_AUTH=entra_id
       MAF_E2E_AZURE_OPENAI_ENDPOINT={1}
       MAF_E2E_AZURE_OPENAI_DEPLOYMENT={2}
       MAF_E2E_TARGET_URL={3}

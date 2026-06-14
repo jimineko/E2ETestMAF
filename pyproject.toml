@@ -17,6 +17,7 @@ dependencies = [
   "aiohttp>=3.13,<4",
   "azure-identity>=1.25,<2",
   "azure-storage-blob>=12.30,<13",
+  "google-auth>=2.40,<3",
   "mcp>=1.24,<2",
   "opentelemetry-exporter-otlp>=1.42,<2",
   "opentelemetry-sdk>=1.42,<2",
@@ -25,6 +26,10 @@ dependencies = [
 
 [project.optional-dependencies]
 azure-monitor = ["azure-monitor-opentelemetry-exporter>=1.0.0b45"]
+cli-providers = [
+  "agent-framework-github-copilot==1.0.0rc1",
+  "openai-codex==0.1.0b3",
+]
 devui = ["agent-framework-devui==1.0.0b260528"]
 hyperlight-runtime = [
   "hyperlight-sandbox==0.4.0",
@@ -52,11 +57,15 @@ packages = ["src/maf_e2e"]
 [tool.hatch.build.targets.wheel.force-include]
 "agents" = "maf_e2e/agent_definitions"
 
+[tool.uv]
+prerelease = "allow"
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [
   "integration: requires Linux x86_64, KVM, Playwright, and external runtime dependencies",
+  "subscription_cli: consumes an authenticated Copilot or ChatGPT subscription",
   "xdist_group(name): keep RAMPART trial groups on one worker",
 ]
 
@@ -74,6 +83,10 @@ packages = ["maf_e2e"]
 
 [[tool.mypy.overrides]]
 module = ["azure.monitor.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["agent_framework.github", "copilot", "openai_codex"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

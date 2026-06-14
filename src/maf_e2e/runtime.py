@@ -2,22 +2,19 @@ from __future__ import annotations
 
 import asyncio
 import json
-import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 from types import TracebackType
 from typing import Any
 
-from agent_framework import MCPStdioTool, SupportsChatGetResponse
-from agent_framework.openai import OpenAIChatClient, OpenAIChatCompletionClient
-from agent_framework_gemini import GeminiChatClient
+from agent_framework import MCPStdioTool
 from azure.identity.aio import DefaultAzureCredential
 
-from maf_e2e.agent_config import load_agent_set
 from maf_e2e.artifacts import archive_run, blob_uri, upload_artifacts
 from maf_e2e.codeact import (
     CodeActUnavailable,
     ToolAuditLog,
+    build_audited_mcp_tools,
     build_codeact_provider,
     normalize_origin,
     preflight_hyperlight,
@@ -32,7 +29,8 @@ from maf_e2e.models import (
     StageFailure,
     TestPlan,
 )
-from maf_e2e.workflow import AgentSet, build_browser_resume_workflow, build_e2e_test_workflow
+from maf_e2e.provider_backend import build_provider_backend
+from maf_e2e.workflow import build_browser_resume_workflow, build_e2e_test_workflow
 
 PLAYWRIGHT_ALLOWED_TOOLS = {
     "browser_click",
@@ -68,40 +66,6 @@ class GeminiCompatibleMCPStdioTool(MCPStdioTool):
         return self
 
 
-def build_chat_client(
-    settings: Settings,
-    credential: DefaultAzureCredential | None,
-) -> SupportsChatGetResponse[Any]:
-    if settings.model_provider == "gemini":
-        api_key = (
-            settings.gemini_api_key.get_secret_value()
-            if settings.gemini_api_key is not None
-            else None
-        )
-        return GeminiChatClient(
-            api_key=api_key,
-            model=settings.gemini_model,
-            vertexai=settings.gemini_use_vertex_ai,
-            project=settings.gemini_vertex_project,
-            location=settings.gemini_vertex_location,
-        )
-    if settings.model_provider == "github_copilot":
-        return OpenAIChatCompletionClient(
-            model=settings.github_copilot_model,
-            api_key=_resolve_github_copilot_token(settings),
-            base_url=settings.github_copilot_base_url,
-        )
-
-    if credential is None:
-        raise RuntimeError("Azure OpenAI requires an Azure credential")
-    return OpenAIChatClient(
-        model=settings.azure_openai_deployment,
-        credential=credential,
-        azure_endpoint=settings.azure_openai_endpoint,
-        api_version=settings.azure_openai_api_version,
-    )
-
-
 class RuntimeResources:
     def __init__(self, settings: Settings, resource_id: str, *, target_url: str | None) -> None:
         self.settings = settings
@@ -110,11 +74,13 @@ class RuntimeResources:
         self.run_dir = settings.artifact_root / resource_id
         self.playwright_dir = self.run_dir / "playwright"
         self.playwright_dir.mkdir(parents=True, exist_ok=True)
-        needs_azure_credential = settings.model_provider == "azure_openai" or bool(
-            settings.blob_account_url
+        self.backend = build_provider_backend(
+            settings, _agent_config_dir(settings.agent_config_dir)
         )
-        self.credential = DefaultAzureCredential() if needs_azure_credential else None
-        self.client = build_chat_client(settings, self.credential)
+        self.agents = self.backend.agents
+        self.blob_credential = (
+            DefaultAzureCredential() if settings.blob_account_url else None
+        )
         self.allowed_origins = {
             normalize_origin(origin)
             for origin in (
@@ -124,7 +90,7 @@ class RuntimeResources:
         }
         tool_class = (
             GeminiCompatibleMCPStdioTool
-            if settings.model_provider == "gemini"
+            if self.backend.sanitize_mcp_schemas
             else MCPStdioTool
         )
         allowed_tools = set(PLAYWRIGHT_ALLOWED_TOOLS)
@@ -140,13 +106,6 @@ class RuntimeResources:
             request_timeout=max(settings.playwright_navigation_timeout_ms // 1000 + 30, 90),
             allowed_tools=allowed_tools,
         )
-        self.agents: AgentSet = load_agent_set(
-            _agent_config_dir(settings.agent_config_dir),
-            self.client,
-            skill_paths=settings.skill_paths,
-            model_retries=settings.model_retries,
-            trace_content=settings.trace_content,
-        )
         self._mcp_entered = False
         self.codeact_active = False
         self.codeact_error: CodeActUnavailable | None = None
@@ -154,6 +113,7 @@ class RuntimeResources:
         self.audit_log = ToolAuditLog()
 
     async def start(self) -> RuntimeResources:
+        await self.backend.start()
         await self.mcp.__aenter__()
         self._mcp_entered = True
         if self.settings.codeact_mode != "disabled":
@@ -181,29 +141,51 @@ class RuntimeResources:
             )
             agent = getattr(self.agents, stage)
             agent.context_providers.append(provider)
-            agent.middleware.append(provider.policy_middleware)  # type: ignore[attr-defined]
             self.codeact_providers.append(provider)
         self.codeact_active = True
 
     def workflow(self, *, checkpoint_root: Path, interactive: bool) -> Any:
+        discovery_tools, browser_tools = self._workflow_tools()
         return build_e2e_test_workflow(
             self.agents,
             checkpoint_root,
-            tools=None if self.codeact_active else [self.mcp],
+            discovery_tools=discovery_tools,
+            browser_tools=browser_tools,
             structured_retries=self.settings.structured_output_retries,
-            use_native_response_format=self.settings.model_provider
-            not in {"gemini", "github_copilot"},
+            use_native_response_format=self.backend.use_native_response_format,
             interactive=interactive,
         )
 
     def browser_resume_workflow(self, *, checkpoint_root: Path) -> Any:
+        _, browser_tools = self._workflow_tools()
         return build_browser_resume_workflow(
             self.agents,
             checkpoint_root,
-            tools=None if self.codeact_active else [self.mcp],
+            browser_tools=browser_tools,
             structured_retries=self.settings.structured_output_retries,
-            use_native_response_format=self.settings.model_provider
-            not in {"gemini", "github_copilot"},
+            use_native_response_format=self.backend.use_native_response_format,
+        )
+
+    def _workflow_tools(self) -> tuple[list[Any] | None, list[Any] | None]:
+        if self.codeact_active:
+            return None, None
+        return (
+            build_audited_mcp_tools(
+                stage="discovery",
+                mcp_functions=self.mcp.functions,
+                allowed_origins=self.allowed_origins,
+                allow_file_upload=self.settings.codeact_allow_file_upload,
+                allow_destructive_actions=self.settings.codeact_allow_destructive_actions,
+                audit_log=self.audit_log,
+            ),
+            build_audited_mcp_tools(
+                stage="browser",
+                mcp_functions=self.mcp.functions,
+                allowed_origins=self.allowed_origins,
+                allow_file_upload=self.settings.codeact_allow_file_upload,
+                allow_destructive_actions=self.settings.codeact_allow_destructive_actions,
+                audit_log=self.audit_log,
+            ),
         )
 
     async def close(self) -> None:
@@ -214,8 +196,9 @@ class RuntimeResources:
                 close()
         if self._mcp_entered or self.mcp.is_connected:
             await self.mcp.close()
-        if self.credential is not None:
-            await self.credential.close()
+        await self.backend.close()
+        if self.blob_credential is not None:
+            await self.blob_credential.close()
 
 
 class E2ETestRuntime:
@@ -225,7 +208,11 @@ class E2ETestRuntime:
         self.resources = RuntimeResources(settings, request.run_id, target_url=request.target_url)
 
     async def __aenter__(self) -> E2ETestRuntime:
-        await self.resources.start()
+        try:
+            await self.resources.start()
+        except BaseException:
+            await self.resources.close()
+            raise
         return self
 
     async def __aexit__(
@@ -294,13 +281,13 @@ class E2ETestRuntime:
         )
         archive = archive_run(run_dir)
         if self.settings.blob_account_url:
-            if self.resources.credential is None:
+            if self.resources.blob_credential is None:
                 raise RuntimeError("Blob upload requires an Azure credential")
             await upload_artifacts(
                 [report_path, archive, audit_path],
                 account_url=self.settings.blob_account_url,
                 container_name=self.settings.blob_container,
-                credential=self.resources.credential,
+                credential=self.resources.blob_credential,
                 run_id=report.run_id,
             )
         return report
@@ -348,42 +335,6 @@ def _codeact_blocked_report(request: E2ETestRequest, exc: CodeActUnavailable) ->
         security_findings=[],
         failures=[failure],
     )
-
-
-def _resolve_github_copilot_token(settings: Settings) -> str:
-    if settings.github_copilot_token is not None:
-        explicit = settings.github_copilot_token.get_secret_value().strip()
-        if explicit:
-            return explicit
-    if not settings.github_copilot_use_gh_cli_token:
-        raise RuntimeError(
-            "GitHub Copilot requires MAF_E2E_GITHUB_COPILOT_TOKEN or "
-            "MAF_E2E_GITHUB_COPILOT_USE_GH_CLI_TOKEN=true"
-        )
-    try:
-        result = subprocess.run(
-            ["gh", "auth", "token"],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except FileNotFoundError as exc:
-        raise RuntimeError(
-            "GitHub Copilot auth fallback requires gh CLI. Install gh or set "
-            "MAF_E2E_GITHUB_COPILOT_TOKEN."
-        ) from exc
-    except subprocess.CalledProcessError as exc:
-        raise RuntimeError(
-            "Unable to resolve GitHub token from `gh auth token`. Run `gh auth login` or set "
-            "MAF_E2E_GITHUB_COPILOT_TOKEN."
-        ) from exc
-    token = result.stdout.strip()
-    if not token:
-        raise RuntimeError(
-            "gh auth token returned an empty token. Re-authenticate with `gh auth login` "
-            "or set MAF_E2E_GITHUB_COPILOT_TOKEN."
-        )
-    return token
 
 
 def _sanitize_mcp_function_schemas(tool: MCPStdioTool) -> None:

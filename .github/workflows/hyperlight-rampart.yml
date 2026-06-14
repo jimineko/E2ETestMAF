@@ -14,6 +14,7 @@ jobs:
       contents: read
     env:
       MAF_E2E_MODEL_PROVIDER: azure_openai
+      MAF_E2E_MODEL_AUTH: entra_id
       MAF_E2E_AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
       MAF_E2E_AZURE_OPENAI_DEPLOYMENT: ${{ secrets.AZURE_OPENAI_DEPLOYMENT }}
       MAF_E2E_CODEACT_MODE: required

@@ -23,11 +23,11 @@ COPY agents ./agents
 COPY skills ./skills
 RUN uv sync --frozen --no-dev --extra azure-monitor --extra hyperlight-runtime
 
-RUN groupadd --gid 10001 mafqa \
-    && useradd --uid 10001 --gid mafqa --create-home --shell /usr/sbin/nologin mafqa \
+RUN groupadd --gid 10001 mafe2e \
+    && useradd --uid 10001 --gid mafe2e --create-home --shell /usr/sbin/nologin mafe2e \
     && mkdir -p /app/artifacts /app/checkpoints /app/auth \
-    && chown -R mafqa:mafqa /app/artifacts /app/checkpoints /app/auth
+    && chown -R mafe2e:mafe2e /app/artifacts /app/checkpoints /app/auth
 
-USER mafqa
+USER mafe2e
 
 CMD ["maf-e2e"]

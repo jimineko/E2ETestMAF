@@ -8,6 +8,8 @@ from time import monotonic
 from typing import Any
 
 from agent_framework import (
+    AgentContext,
+    AgentMiddleware,
     ChatContext,
     ChatMiddleware,
     FunctionInvocationContext,
@@ -158,6 +160,63 @@ class ChatRetryMiddleware(ChatMiddleware):
                 if not transient or retry_attempt > self.max_retries:
                     raise
                 await asyncio.sleep(float(retry_attempt))
+
+
+class AgentRetryMiddleware(AgentMiddleware):
+    def __init__(self, *, stage: str, max_retries: int, trace_content: bool = False) -> None:
+        self.stage = stage
+        self.max_retries = max_retries
+        self.trace_content = trace_content
+
+    async def process(
+        self,
+        context: AgentContext,
+        call_next: Callable[[], Awaitable[None]],
+    ) -> None:
+        metadata = OBSERVABILITY_CONTEXT.get() or {}
+        for retry_attempt in range(1, self.max_retries + 2):
+            started = monotonic()
+            try:
+                with TRACER.start_as_current_span(
+                    "maf_e2e.cli_agent_call",
+                    record_exception=False,
+                    set_status_on_exception=False,
+                ) as span:
+                    _set_common_attributes(span, metadata, self.stage)
+                    span.set_attribute("maf.retry_attempt", retry_attempt)
+                    await call_next()
+                    span.set_attribute("maf.success", True)
+                    span.set_attribute("maf.duration_ms", int((monotonic() - started) * 1000))
+                    if self.trace_content:
+                        span.set_attribute(
+                            "gen_ai.input",
+                            "\n".join(message.text or "" for message in context.messages)[:4000],
+                        )
+                return
+            except Exception as exc:
+                transient = is_transient_error(exc)
+                if not transient or retry_attempt > self.max_retries:
+                    raise
+                await asyncio.sleep(float(retry_attempt))
+
+
+async def invoke_tool_with_telemetry(
+    function: Any, *, arguments: dict[str, Any], stage: str
+) -> Any:
+    started = monotonic()
+    success = False
+    try:
+        result = await function.invoke(arguments=arguments)
+        success = True
+        return result
+    finally:
+        metadata = OBSERVABILITY_CONTEXT.get() or {}
+        duration_ms = int((monotonic() - started) * 1000)
+        with TRACER.start_as_current_span("maf_e2e.tool_call") as span:
+            _set_common_attributes(span, metadata, stage)
+            span.set_attribute("tool.name", str(function.name))
+            span.set_attribute("tool.success", success)
+            span.set_attribute("tool.duration_ms", duration_ms)
 
 
 class ToolTelemetryMiddleware(FunctionMiddleware):

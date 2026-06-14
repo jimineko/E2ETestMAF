@@ -16,6 +16,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from agent_framework import (
+    SKIP_PARSING,
     AgentSession,
     FunctionInvocationContext,
     FunctionMiddleware,
@@ -156,6 +157,10 @@ class CodeActPolicyMiddleware(FunctionMiddleware):
             return
 
         arguments = context.arguments if isinstance(context.arguments, Mapping) else {}
+        self.validate(arguments)
+        await call_next()
+
+    def validate(self, arguments: Mapping[str, Any]) -> None:
         code = arguments.get("code")
         if not isinstance(code, str):
             raise CodeActPolicyError("execute_code requires a string code argument")
@@ -173,7 +178,6 @@ class CodeActPolicyMiddleware(FunctionMiddleware):
                 f"execute_code invocation limit exceeded ({count}>{self.max_invocations})"
             )
         self._invocations[key] = count
-        await call_next()
 
 
 class AuditedHyperlightCodeActProvider(HyperlightCodeActProvider):
@@ -189,7 +193,23 @@ class AuditedHyperlightCodeActProvider(HyperlightCodeActProvider):
         self.audit_log = audit_log
 
     def create_run_tool(self) -> FunctionTool:
-        return self._execute_code_tool.create_run_tool()
+        execute_code = self._execute_code_tool.create_run_tool()
+
+        async def invoke_with_policy(**arguments: Any) -> Any:
+            policy = getattr(self, "policy_middleware", None)
+            if not isinstance(policy, CodeActPolicyMiddleware):
+                raise CodeActPolicyError("CodeAct policy is not configured")
+            policy.validate(arguments)
+            return await execute_code.invoke(arguments=arguments, skip_parsing=True)
+
+        return FunctionTool(
+            name=execute_code.name,
+            description=execute_code.description,
+            approval_mode="never_require",
+            func=invoke_with_policy,
+            input_model=execute_code.parameters(),
+            result_parser=SKIP_PARSING,
+        )
 
     async def before_run(
         self,
@@ -301,6 +321,33 @@ def build_codeact_provider(
         max_invocations=max_invocations,
     )
     return provider
+
+
+def build_audited_mcp_tools(
+    *,
+    stage: str,
+    mcp_functions: Sequence[FunctionTool],
+    allowed_origins: set[str],
+    allow_file_upload: bool,
+    allow_destructive_actions: bool,
+    audit_log: ToolAuditLog,
+) -> list[FunctionTool]:
+    allowed_names = DISCOVERY_TOOL_NAMES if stage == "discovery" else BROWSER_TOOL_NAMES
+    if allow_file_upload and stage == "browser":
+        allowed_names = {*allowed_names, "browser_file_upload"}
+    return [
+        _wrap_mcp_function(
+            function,
+            stage=stage,
+            allowed_origins=allowed_origins,
+            allow_file_upload=allow_file_upload,
+            allow_destructive_actions=allow_destructive_actions,
+            audit_log=audit_log,
+            host_loop=None,
+        )
+        for function in mcp_functions
+        if function.name in allowed_names
+    ]
 
 
 def _wrap_mcp_function(

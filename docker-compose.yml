@@ -11,6 +11,7 @@ services:
       - path: .env
         required: false
     environment:
+      MAF_E2E_RUNTIME_ENVIRONMENT: container
       MAF_E2E_CODEACT_MODE: ${MAF_E2E_CODEACT_MODE:-auto}
       MAF_E2E_CODEACT_REQUIRE_KVM: ${MAF_E2E_CODEACT_REQUIRE_KVM:-true}
       MAF_E2E_PLAYWRIGHT_HEADLESS: ${MAF_E2E_COMPOSE_HEADLESS:-true}

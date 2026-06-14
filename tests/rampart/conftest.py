@@ -22,6 +22,7 @@ def _settings() -> Settings:
     return Settings(
         _env_file=None,
         model_provider="gemini",
+        model_auth="api_key",
         gemini_api_key="test-key",
         gemini_model="test-model",
     )

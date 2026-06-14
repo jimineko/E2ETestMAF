@@ -26,9 +26,10 @@ async def test_hyperlight_calls_multiple_playwright_mcp_tools() -> None:
     target_url = os.environ["MAF_E2E_RAMPART_TARGET_URL"]
     settings = _settings(
         _env_file=None,
-        model_provider="github_copilot",
-        github_copilot_token="integration-test-token",
-        github_copilot_use_gh_cli_token=False,
+        model_provider="azure_openai",
+        model_auth="entra_id",
+        azure_openai_endpoint="https://example.openai.azure.com",
+        azure_openai_deployment="integration-placeholder",
         target_url=target_url,
         codeact_mode="required",
         codeact_require_kvm=True,

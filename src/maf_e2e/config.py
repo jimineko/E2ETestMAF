@@ -15,21 +15,28 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    model_provider: Literal["azure_openai", "gemini", "github_copilot"] = "azure_openai"
+    model_provider: Literal[
+        "azure_openai", "gemini", "vertex_ai", "github_copilot", "codex_cli"
+    ]
+    model_auth: Literal["api_key", "entra_id", "adc", "subscription"]
+    runtime_environment: Literal["local", "container", "azure"] = "local"
 
     azure_openai_endpoint: str | None = None
     azure_openai_deployment: str | None = None
     azure_openai_api_version: str = "2025-04-01-preview"
+    azure_openai_api_key: SecretStr | None = None
 
     gemini_api_key: SecretStr | None = None
     gemini_model: str | None = None
-    gemini_use_vertex_ai: bool = False
     gemini_vertex_project: str | None = None
     gemini_vertex_location: str | None = None
-    github_copilot_token: SecretStr | None = None
-    github_copilot_model: str = "gpt-4.1"
-    github_copilot_base_url: str = "https://models.inference.ai.azure.com"
-    github_copilot_use_gh_cli_token: bool = True
+    github_copilot_cli_path: str = "copilot"
+    github_copilot_model: str | None = None
+    github_copilot_timeout_seconds: int = Field(default=300, ge=10, le=3600)
+    codex_cli_path: str = "codex"
+    codex_model: str | None = None
+    codex_timeout_seconds: int = Field(default=300, ge=10, le=3600)
+    codex_max_tool_rounds: int = Field(default=8, ge=1, le=50)
 
     target_url: str | None = None
     objective: str = "Validate the critical user journey and report regressions."
@@ -84,45 +91,65 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_model_configuration(self) -> Self:
+        valid_auth = {
+            "azure_openai": {"api_key", "entra_id"},
+            "gemini": {"api_key"},
+            "vertex_ai": {"api_key", "adc"},
+            "github_copilot": {"subscription"},
+            "codex_cli": {"subscription"},
+        }
+        if self.model_auth not in valid_auth[self.model_provider]:
+            allowed = ", ".join(sorted(valid_auth[self.model_provider]))
+            raise ValueError(
+                f"{self.model_provider} does not support model auth {self.model_auth!r}; "
+                f"allowed: {allowed}"
+            )
+
         if self.model_provider == "azure_openai":
             if not self.azure_openai_endpoint or not self.azure_openai_deployment:
                 raise ValueError(
                     "Azure OpenAI requires MAF_E2E_AZURE_OPENAI_ENDPOINT and "
                     "MAF_E2E_AZURE_OPENAI_DEPLOYMENT"
                 )
+            if self.model_auth == "api_key" and not _has_secret(self.azure_openai_api_key):
+                raise ValueError(
+                    "Azure OpenAI API key auth requires MAF_E2E_AZURE_OPENAI_API_KEY"
+                )
             return self
 
         if self.model_provider == "gemini":
             if not self.gemini_model:
                 raise ValueError("Gemini requires MAF_E2E_GEMINI_MODEL")
-            has_gemini_api_key = bool(
-                self.gemini_api_key and self.gemini_api_key.get_secret_value().strip()
-            )
-            if not self.gemini_use_vertex_ai and not has_gemini_api_key:
+            if not _has_secret(self.gemini_api_key):
                 raise ValueError("Gemini Developer API requires MAF_E2E_GEMINI_API_KEY")
+            return self
+
+        if self.model_provider == "vertex_ai":
+            if not self.gemini_model:
+                raise ValueError("Vertex AI requires MAF_E2E_GEMINI_MODEL")
+            if self.model_auth == "api_key" and not _has_secret(self.gemini_api_key):
+                raise ValueError("Vertex AI API key auth requires MAF_E2E_GEMINI_API_KEY")
             if (
-                self.gemini_use_vertex_ai
-                and not has_gemini_api_key
+                self.model_auth == "adc"
                 and (not self.gemini_vertex_project or not self.gemini_vertex_location)
             ):
                 raise ValueError(
-                    "Vertex AI requires MAF_E2E_GEMINI_API_KEY or both "
+                    "Vertex AI ADC requires both "
                     "MAF_E2E_GEMINI_VERTEX_PROJECT and MAF_E2E_GEMINI_VERTEX_LOCATION"
                 )
             return self
 
-        if not self.github_copilot_model.strip():
-            raise ValueError("GitHub Copilot requires MAF_E2E_GITHUB_COPILOT_MODEL")
-        if not self.github_copilot_base_url.strip():
-            raise ValueError("GitHub Copilot requires MAF_E2E_GITHUB_COPILOT_BASE_URL")
-        has_copilot_token = bool(
-            self.github_copilot_token and self.github_copilot_token.get_secret_value().strip()
-        )
-        if not has_copilot_token and not self.github_copilot_use_gh_cli_token:
+        if self.runtime_environment != "local":
             raise ValueError(
-                "GitHub Copilot requires MAF_E2E_GITHUB_COPILOT_TOKEN or "
-                "MAF_E2E_GITHUB_COPILOT_USE_GH_CLI_TOKEN=true"
+                f"{self.model_provider} is local-only; "
+                "MAF_E2E_RUNTIME_ENVIRONMENT must be local"
             )
+        if self.model_provider == "github_copilot" and not self.github_copilot_cli_path.strip():
+            raise ValueError(
+                "GitHub Copilot requires MAF_E2E_GITHUB_COPILOT_CLI_PATH"
+            )
+        if self.model_provider == "codex_cli" and not self.codex_cli_path.strip():
+            raise ValueError("Codex CLI requires MAF_E2E_CODEX_CLI_PATH")
         return self
 
     def playwright_args(
@@ -153,3 +180,7 @@ class Settings(BaseSettings):
         if allowed_origins:
             args.extend(["--allowed-origins", ";".join(allowed_origins)])
         return args
+
+
+def _has_secret(value: SecretStr | None) -> bool:
+    return bool(value and value.get_secret_value().strip())

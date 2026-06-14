@@ -17,8 +17,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--model-provider",
-        choices=["azure_openai", "gemini", "github_copilot"],
-        help="Chat model provider; overrides MAF_E2E_MODEL_PROVIDER",
+        choices=["azure_openai", "gemini", "vertex_ai", "github_copilot", "codex_cli"],
+        help="Agent backend; overrides MAF_E2E_MODEL_PROVIDER",
+    )
+    parser.add_argument(
+        "--model-auth",
+        choices=["api_key", "entra_id", "adc", "subscription"],
+        help="Authentication method; overrides MAF_E2E_MODEL_AUTH",
     )
     parser.add_argument("--target-url", help="Absolute target application URL")
     parser.add_argument("--objective", help="Business objective to validate")
@@ -30,7 +35,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 async def _run(args: argparse.Namespace) -> int:
-    settings = Settings(model_provider=args.model_provider) if args.model_provider else Settings()
+    overrides = {
+        key: value
+        for key, value in {
+            "model_provider": args.model_provider,
+            "model_auth": args.model_auth,
+        }.items()
+        if value is not None
+    }
+    settings = Settings(**overrides)
     resume_plan = None
     if args.resume_run_id:
         resume_plan = await load_checkpoint_test_plan(

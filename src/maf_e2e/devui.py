@@ -11,7 +11,7 @@ from maf_e2e.telemetry import configure_telemetry
 
 def main() -> None:
     try:
-        settings = Settings()
+        settings = Settings(**{})
         if settings.devui_host not in {"127.0.0.1", "localhost"}:
             raise ValueError("DevUI is restricted to localhost")
         configure_telemetry(settings)
