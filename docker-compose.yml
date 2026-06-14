@@ -1,21 +1,28 @@
-x-qa-common: &qa-common
-  platform: linux/amd64
-  build: .
-  env_file:
-    - path: .env
-      required: false
-  volumes:
-    - ./artifacts:/app/artifacts
-    - ./checkpoints:/app/checkpoints
-    - ./auth:/app/auth:ro
-  shm_size: 2gb
-
 services:
   qa:
-    <<: *qa-common
+    platform: linux/amd64
+    build: .
+    init: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - seccomp=unconfined
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      MAF_QA_CODEACT_MODE: ${MAF_QA_CODEACT_MODE:-auto}
+      MAF_QA_CODEACT_REQUIRE_KVM: ${MAF_QA_CODEACT_REQUIRE_KVM:-true}
+      MAF_QA_PLAYWRIGHT_HEADLESS: ${MAF_QA_COMPOSE_HEADLESS:-true}
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    volumes:
+      - qa-artifacts:/app/artifacts
+      - qa-checkpoints:/app/checkpoints
+      - qa-auth:/app/auth
+    shm_size: 2gb
 
-  qa-hyperlight:
-    <<: *qa-common
-    profiles: [hyperlight]
-    devices:
-      - /dev/kvm:/dev/kvm
+volumes:
+  qa-artifacts:
+  qa-checkpoints:
+  qa-auth:

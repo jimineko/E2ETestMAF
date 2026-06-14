@@ -409,7 +409,12 @@ def _sanitized_parameters_factory(original_parameters: Any) -> Any:
 def _strip_json_schema_dialect(schema: dict[str, Any]) -> dict[str, Any]:
     cleaned: dict[str, Any] = {}
     for key, value in schema.items():
-        if key in {"$schema", "additionalProperties", "additional_properties"}:
+        if key in {
+            "$schema",
+            "additionalProperties",
+            "additional_properties",
+            "propertyNames",
+        }:
             continue
         if isinstance(value, dict):
             cleaned[key] = _strip_json_schema_dialect(value)

@@ -26,7 +26,7 @@ Orchestrator -> Discovery -> Generator -> Browser(MCP)
 - GitHub CopilotのGitHubトークン認証（明示トークンまたは `gh auth token` フォールバック）
 - Blob Storageへの成果物アップロード
 - OpenTelemetryのOTLP/Application Insights出力
-- Docker ComposeとAzure Container Apps Job用Bicep
+- macOS/Linux/Windows WSL2共通のDocker Compose実行経路とAzure VM用Bicep
 
 ## 重要な設計補正
 
@@ -41,12 +41,27 @@ DiscoveryとBrowserは、対応環境ではMAF `HyperlightCodeActProvider`から
 - `/dev/kvm`を読み書きできること
 - コンテナには`--device=/dev/kvm:/dev/kvm`だけを渡し、privilegedにしないこと
 
-macOS arm64ではWasm backend wheelが提供されていません。`MAF_QA_CODEACT_MODE=auto`では直接MCP経路へ明示的に切り替わり、`required`ではBLOCKEDレポートを返します。本番とLinux統合試験は`required`を使用します。
+macOS arm64ではHyperlight自体とKVMを使用できません。Docker Compose内のLinux amd64コンテナでQAワークフローは実行できますが、`MAF_QA_CODEACT_MODE=auto`により監査付き直接MCP経路へ明示的に切り替わります。`required`では起動を拒否します。本番とLinux KVM統合試験は`required`を使用します。
 
 ## ローカル実行
 
+デフォルトの実行方法はDocker Composeです。
+
 ```bash
 cp .env.example .env
+./scripts/qa-compose
+```
+
+対象アプリがホストのlocalhostで動いている場合、`.env`では`localhost`ではなく`host.docker.internal`を指定します。
+
+```dotenv
+MAF_QA_TARGET_URL=http://host.docker.internal:3000
+MAF_QA_PLAYWRIGHT_ALLOWED_ORIGINS=http://host.docker.internal:3000
+```
+
+Python環境を直接使う方法は、実装・単体テスト向けです。
+
+```bash
 uv python install
 uv sync --all-extras --group dev
 npm ci
@@ -101,6 +116,8 @@ MAF_QA_CODEACT_MAX_INVOCATIONS=6
 MAF_QA_CODEACT_REQUIRE_KVM=true
 MAF_QA_CODEACT_ALLOW_FILE_UPLOAD=false
 MAF_QA_CODEACT_ALLOW_DESTRUCTIVE_ACTIONS=false
+MAF_QA_COMPOSE_KVM=auto               # auto | required | disabled
+MAF_QA_COMPOSE_HEADLESS=true           # Docker内のPlaywrightは既定でheadless
 ```
 
 `required`でpreflightに失敗した場合、直接MCPへfallbackせず構成障害としてBLOCKEDになります。`auto`のfallbackはローカル開発用です。
@@ -123,7 +140,7 @@ uv sync --extra devui --group dev
 MAF_QA_DEVUI_AUTH_TOKEN=change-me uv run maf-qa-devui
 ```
 
-DevUIでESCALATEした実行は人間の `retry` または `abort` 応答まで停止します。本番のbatch/ACA Jobでは同じ状態を`blocked`レポートと終了コード3へ変換します。
+DevUIでESCALATEした実行は人間の `retry` または `abort` 応答まで停止します。本番のVM batchでは同じ状態を`blocked`レポートと終了コード3へ変換します。
 
 ### モデルプロバイダー
 
@@ -177,13 +194,48 @@ uv run maf-qa \
 ## Docker
 
 ```bash
-docker compose build
-docker compose run --rm qa
-# Linux KVM host
-docker compose --profile hyperlight run --rm qa-hyperlight
+./scripts/qa-compose
+./scripts/qa-compose --target-url https://example.com
 ```
 
-Dockerは`linux/amd64`固定です。通常の`qa` serviceはKVM deviceを要求しません。実HyperlightはLinux KVMホストで`qa-hyperlight` serviceと`MAF_QA_CODEACT_MODE=required`を使用してください。
+ランチャーはDockerを起動し、ホストとDocker daemonの両方から`/dev/kvm`を利用できるか検査します。成功時だけ`docker-compose.kvm.yml`を自動適用し、`qa`コンテナへKVM deviceだけを渡します。privilegedモードは使用しません。利用できない場合はmacOSを含め`auto`の直接MCP経路で実行します。実行中はDocker管理のnamed volumeを使い、終了時に`artifacts/`と`checkpoints/`へ成果物を同期します。
+
+KVMを必須にして、利用できなければ実行前に失敗させる場合:
+
+```bash
+MAF_QA_CODEACT_MODE=required MAF_QA_COMPOSE_KVM=required ./scripts/qa-compose
+```
+
+### macOS
+
+Docker Desktopを起動して`./scripts/qa-compose`を実行します。Apple Siliconでも`linux/amd64`コンテナを使用するため動作しますが、CPUエミュレーションの分だけ遅くなります。HyperlightはmacOSのHypervisor.frameworkに未対応で、Docker Desktop越しにKVMを利用することもできないため、CodeActではなく直接MCP経路になります。
+
+コンテナは非rootユーザーで実行し、Linux capabilityをすべて削除します。Chromium sandboxが必要とするuser namespaceを許可するためComposeではseccompを解除していますが、privilegedモードは使用しません。
+
+### Windows WSL2
+
+リポジトリとコマンド実行環境をWSL2側へ置き、WSL2のbashから`./scripts/qa-compose`を実行します。通常のQAはKVMなしでも動作します。実Hyperlightを使うにはWindows 11のnested virtualization、KVM対応WSL2 kernel、読み書き可能な`/dev/kvm`、および同じWSL2 distro内で動作するDocker Engineが必要です。
+
+必要に応じて`%UserProfile%\.wslconfig`でnested virtualizationを明示します。Windows 11では既定値も`true`です。
+
+```ini
+[wsl2]
+nestedVirtualization=true
+```
+
+```powershell
+wsl --update
+wsl --list --verbose
+wsl --shutdown
+```
+
+```bash
+test -c /dev/kvm && test -r /dev/kvm && test -w /dev/kvm
+docker info
+MAF_QA_CODEACT_MODE=required MAF_QA_COMPOSE_KVM=required ./scripts/qa-compose
+```
+
+Docker DesktopのWSL2 custom kernel利用は公式サポート外です。Docker Desktop側daemonへ`/dev/kvm`を渡せない構成では、ランチャーが検出して直接MCPへ切り替えます。
 
 ## Azure
 

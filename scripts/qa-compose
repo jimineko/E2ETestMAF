@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$ROOT_DIR"
+
+COMPOSE=(docker compose -f docker-compose.yml)
+COMMAND_OVERRIDE=""
+COMPOSE_ENVIRONMENT=$("${COMPOSE[@]}" config --environment)
+
+cleanup() {
+  if [[ -n "$COMMAND_OVERRIDE" ]]; then
+    rm -f "$COMMAND_OVERRIDE"
+  fi
+}
+trap cleanup EXIT
+
+compose_setting() {
+  local key=$1
+  printf '%s\n' "$COMPOSE_ENVIRONMENT" | awk -F= -v key="$key" '$1 == key {sub(/^[^=]*=/, ""); print; exit}'
+}
+
+KVM_MODE=${MAF_QA_COMPOSE_KVM:-$(compose_setting MAF_QA_COMPOSE_KVM)}
+KVM_MODE=${KVM_MODE:-auto}
+CODEACT_MODE=${MAF_QA_CODEACT_MODE:-$(compose_setting MAF_QA_CODEACT_MODE)}
+CODEACT_MODE=${CODEACT_MODE:-auto}
+KVM_AVAILABLE=false
+KVM_REASON="host is not Linux x86_64"
+
+case "$KVM_MODE" in
+  auto|required|disabled) ;;
+  *)
+    echo "error: MAF_QA_COMPOSE_KVM must be auto, required, or disabled" >&2
+    exit 2
+    ;;
+esac
+
+if ! docker info >/dev/null 2>&1; then
+  echo "error: Docker daemon is not available. Start Docker Desktop or Docker Engine." >&2
+  exit 2
+fi
+
+if [[ "$KVM_MODE" != "disabled" && "$(uname -s)" == "Linux" && "$(uname -m)" == "x86_64" ]]; then
+  if [[ ! -c /dev/kvm ]]; then
+    KVM_REASON="/dev/kvm is absent on the Linux/WSL2 host"
+  elif docker run --rm --pull=missing --platform linux/amd64 \
+    --device=/dev/kvm:/dev/kvm alpine:3.22 \
+    sh -c 'test -c /dev/kvm && test -r /dev/kvm && test -w /dev/kvm' \
+    >/dev/null 2>&1; then
+    KVM_AVAILABLE=true
+    KVM_REASON="/dev/kvm is available to Docker"
+  else
+    KVM_REASON="the Docker daemon cannot pass /dev/kvm to a container"
+  fi
+fi
+
+if [[ "$KVM_AVAILABLE" == "true" ]]; then
+  MAF_QA_KVM_GID=$(stat -c '%g' /dev/kvm)
+  export MAF_QA_KVM_GID
+  COMPOSE+=(-f docker-compose.kvm.yml)
+  echo "Compose runtime: Hyperlight enabled ($KVM_REASON)." >&2
+else
+  if [[ "$KVM_MODE" == "required" || "$CODEACT_MODE" == "required" ]]; then
+    echo "error: Hyperlight was required, but $KVM_REASON." >&2
+    echo "Use Linux x86_64/WSL2 with KVM, or set MAF_QA_CODEACT_MODE=auto." >&2
+    exit 2
+  fi
+  echo "Compose runtime: direct MCP fallback ($KVM_REASON)." >&2
+fi
+
+if (( $# > 0 )); then
+  COMMAND_OVERRIDE=$(mktemp "${TMPDIR:-/tmp}/maf-qa-compose.XXXXXX.yml")
+  {
+    printf 'services:\n  qa:\n    command:\n      - maf-qa\n'
+    for argument in "$@"; do
+      if [[ "$argument" == *$'\n'* || "$argument" == *$'\r'* ]]; then
+        echo "error: Compose CLI arguments cannot contain newlines" >&2
+        exit 2
+      fi
+      escaped=${argument//\'/\'\'}
+      printf "      - '%s'\n" "$escaped"
+    done
+  } >"$COMMAND_OVERRIDE"
+  COMPOSE+=(-f "$COMMAND_OVERRIDE")
+fi
+
+set +e
+"${COMPOSE[@]}" up --build --abort-on-container-exit --exit-code-from qa
+exit_code=$?
+set -e
+
+mkdir -p artifacts checkpoints
+"${COMPOSE[@]}" cp qa:/app/artifacts/. artifacts/ >/dev/null 2>&1 || true
+"${COMPOSE[@]}" cp qa:/app/checkpoints/. checkpoints/ >/dev/null 2>&1 || true
+"${COMPOSE[@]}" down --remove-orphans >/dev/null 2>&1 || true
+exit "$exit_code"

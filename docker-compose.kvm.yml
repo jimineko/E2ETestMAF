@@ -1,0 +1,6 @@
+services:
+  qa:
+    devices:
+      - /dev/kvm:/dev/kvm
+    group_add:
+      - "${MAF_QA_KVM_GID}"

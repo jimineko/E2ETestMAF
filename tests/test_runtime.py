@@ -108,6 +108,7 @@ def test_strip_json_schema_dialect_removes_schema_key_recursively() -> None:
                 "$schema": "https://json-schema.org/draft/2020-12/schema",
                 "type": "object",
                 "additional_properties": False,
+                "propertyNames": {"type": "string"},
             }
         },
     }
@@ -118,6 +119,7 @@ def test_strip_json_schema_dialect_removes_schema_key_recursively() -> None:
     assert "additionalProperties" not in cleaned
     assert "$schema" not in cleaned["properties"]["payload"]
     assert "additional_properties" not in cleaned["properties"]["payload"]
+    assert "propertyNames" not in cleaned["properties"]["payload"]
 
 
 def test_sanitize_mcp_function_schemas_keeps_each_function_schema() -> None:
