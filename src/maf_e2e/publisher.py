@@ -45,9 +45,12 @@ class Publisher:
                 "updated_at": datetime.now(UTC),
             }
         )
-        portable_metadata = published.model_copy(
-            update={"draft_path": asset.draft_path.relative_to(self.assets.repository_root)}
-        )
+        portable_updates = {"draft_path": asset.draft_path.relative_to(self.assets.repository_root)}
+        if asset.review_history_path is not None and asset.review_history_path.is_absolute():
+            portable_updates["review_history_path"] = asset.review_history_path.relative_to(
+                self.assets.repository_root
+            )
+        portable_metadata = published.model_copy(update=portable_updates)
         _atomic_publish(code_path, source)
         _atomic_publish(spec_path, spec.model_dump_json(indent=2))
         _atomic_publish(metadata_path, portable_metadata.model_dump_json(indent=2))

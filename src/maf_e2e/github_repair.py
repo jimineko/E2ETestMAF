@@ -114,6 +114,9 @@ async def publish_repair_pull_request(
 
 def _pull_request_body(proposal: RepairProposal) -> str:
     validations = "\n".join(f"- {item}" for item in proposal.validation_results) or "- None"
+    changed_files = "\n".join(f"- `{item}`" for item in proposal.changed_files) or "- None"
+    artifacts = "\n".join(f"- `{item}`" for item in proposal.artifact_paths) or "- None"
+    diff_summary = "\n".join(f"    {line}" for line in proposal.diff[:80]) or "    No diff recorded"
     return f"""## E2E repair
 
 Scenario: `{proposal.scenario_id}`
@@ -122,9 +125,28 @@ Confidence: {proposal.confidence:.2f}
 Expected result changed: `{proposal.expected_result_changed}`
 Semantic change detected: `{proposal.semantic_change_detected}`
 
+## Hashes
+
+- Base code hash: `{proposal.base_code_hash}`
+- Proposed code hash: `{proposal.proposed_code_hash}`
+
+## Changed files
+
+{changed_files}
+
+## Diff summary
+
+```diff
+{diff_summary}
+```
+
 ## Validation
 
 {validations}
+
+## Evidence
+
+{artifacts}
 
 This pull request requires human review and is never merged automatically.
 """

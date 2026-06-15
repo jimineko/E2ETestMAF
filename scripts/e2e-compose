@@ -89,8 +89,9 @@ set +e
 exit_code=$?
 set -e
 
-mkdir -p artifacts checkpoints
+mkdir -p artifacts checkpoints .maf-e2e/regression
 "${COMPOSE[@]}" cp e2e:/app/artifacts/. artifacts/ >/dev/null 2>&1 || true
 "${COMPOSE[@]}" cp e2e:/app/checkpoints/. checkpoints/ >/dev/null 2>&1 || true
+"${COMPOSE[@]}" cp e2e:/app/.maf-e2e/regression/. .maf-e2e/regression/ >/dev/null 2>&1 || true
 "${COMPOSE[@]}" down --remove-orphans >/dev/null 2>&1 || true
 exit "$exit_code"

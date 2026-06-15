@@ -7,7 +7,8 @@ from maf_e2e.asset_store import AssetStore
 from maf_e2e.code_validation import CodeValidator
 from maf_e2e.domain.failures import FailureAnalysis, FailureCategory, LocatorRepair
 from maf_e2e.domain.repair import RepairProposal
-from maf_e2e.domain.specification import TestLifecycleStatus, TestSpecification
+from maf_e2e.domain.specification import TestSpecification
+from maf_e2e.playwright_codegen import generate_playwright_test, generated_code_hash
 
 
 class SemanticChangeError(ValueError):
@@ -44,7 +45,14 @@ class RepairService:
         if expected_changed or semantic_changed:
             raise SemanticChangeError("Repair would change approved scenario semantics")
         original = self.assets.load_source(scenario_id)
-        changed_files = [str(asset.draft_path / "generated.spec.ts")]
+        _guard_proposed_code(
+            original,
+            proposed_code,
+            approved_spec=approved_spec,
+            proposed_spec=proposed_spec,
+        )
+        repair_target = asset.published_path or (asset.draft_path / "generated.spec.ts")
+        changed_files = [str(repair_target)]
         diff = list(
             difflib.unified_diff(
                 original.splitlines(),
@@ -56,21 +64,25 @@ class RepairService:
         )
         if not diff:
             raise ValueError("Repair proposal does not change the generated code")
-        repaired = self.assets.save_draft(
-            approved_spec.model_copy(update={"status": TestLifecycleStatus.REPAIR_PENDING}),
-            proposed_code,
-            code_version=asset.code_version + 1,
+        proposal_id = uuid4().hex
+        candidate_path = self.assets.save_repair_candidate(
+            scenario_id, proposal_id, proposed_code
         )
         validator = CodeValidator(self.assets.repository_root)
-        validation = await validator.validate(repaired.draft_path / "generated.spec.ts")
-        self.assets.save_validation(scenario_id, validation)
+        validation = await validator.validate(candidate_path)
+        self.assets.save_repair_validation(scenario_id, proposal_id, validation)
+        validated_code = candidate_path.read_text(encoding="utf-8")
+        repair_dir = candidate_path.parent
         return RepairProposal(
-            proposal_id=uuid4().hex,
+            proposal_id=proposal_id,
             scenario_id=scenario_id,
             spec_version=asset.spec_version,
             base_code_version=asset.code_version,
             reason=analysis.recommended_action,
             changed_files=changed_files,
+            diff=diff,
+            base_code_hash=generated_code_hash(original),
+            proposed_code_hash=generated_code_hash(validated_code),
             semantic_change_detected=False,
             expected_result_changed=False,
             confidence=analysis.confidence,
@@ -78,7 +90,9 @@ class RepairService:
                 f"{check.name}: {'passed' if check.passed else 'failed'}"
                 for check in validation.checks
             ],
-            proposed_code=proposed_code,
+            artifact_paths=[str(repair_dir / "validation-result.json")],
+            proposed_code=validated_code,
+            proposed_code_path=str(candidate_path),
         )
 
 
@@ -119,3 +133,64 @@ def _step_semantics(
         (step.step_id, step.action, step.target, step.value_ref, step.value)
         for step in spec.steps
     ]
+
+
+def _guard_proposed_code(
+    approved_code: str,
+    proposed_code: str,
+    *,
+    approved_spec: TestSpecification,
+    proposed_spec: TestSpecification | None,
+) -> None:
+    if proposed_spec is not None:
+        expected = generate_playwright_test(
+            proposed_spec, spec_hash_override=approved_spec.spec_hash
+        )
+        if proposed_code.strip() != expected.strip():
+            raise SemanticChangeError(
+                "Structured repair code must match deterministic generator output"
+            )
+        return
+    if _normalize_for_code_only_repair(approved_code) != _normalize_for_code_only_repair(
+        proposed_code
+    ):
+        raise SemanticChangeError(
+            "Proposed code changes approved assertions or cannot be classified safely"
+        )
+
+
+def _normalize_for_code_only_repair(source: str) -> str:
+    lines = source.splitlines()
+    normalized: list[str] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        stripped = line.lstrip()
+        indent = line[: len(line) - len(stripped)]
+        if stripped.startswith("// step: "):
+            step_id = stripped.removeprefix("// step: ")
+            if index + 1 >= len(lines):
+                raise SemanticChangeError("Malformed generated step block")
+            opener = lines[index + 1]
+            expected_opener = f'{indent}await test.step("step:{step_id}", async () => {{'
+            if opener != expected_opener:
+                raise SemanticChangeError("Malformed generated step block")
+            end = index + 2
+            expected_closer = f"{indent}}});"
+            while end < len(lines) and lines[end] != expected_closer:
+                end += 1
+            if end >= len(lines):
+                raise SemanticChangeError("Malformed generated step block")
+            normalized.extend(
+                [
+                    line,
+                    opener,
+                    f"    __MAF_E2E_REPAIRABLE_STEP_BODY__:{step_id}",
+                    lines[end],
+                ]
+            )
+            index = end + 1
+            continue
+        normalized.append(line)
+        index += 1
+    return "\n".join(normalized)

@@ -8,7 +8,7 @@ from typing import Literal
 from uuid import uuid4
 
 from maf_e2e.code_validation import write_draft_playwright_config
-from maf_e2e.domain.assets import AssertionResult, TrialRunResult
+from maf_e2e.domain.assets import AssertionResult, StepResult, TrialRunResult
 from maf_e2e.playwright_codegen import generated_code_hash
 from maf_e2e.process import run_process
 
@@ -79,6 +79,7 @@ class TrialRunner:
             env=env,
         )
         report = _load_json_report(json_path, result.stdout)
+        step_results = _step_results(report)
         assertions = _assertion_results(report)
         screenshots = [str(path) for path in run_dir.rglob("*.png")]
         traces = list(run_dir.rglob("trace.zip"))
@@ -97,7 +98,9 @@ class TrialRunner:
             scenario_id=scenario_id,
             code_hash=generated_code_hash(source),
             status=status,
+            step_results=step_results,
             assertion_results=assertions,
+            final_url=_final_url(step_results, assertions),
             screenshot_paths=screenshots,
             trace_path=str(traces[0]) if traces else None,
             console_errors=console_errors,
@@ -120,6 +123,9 @@ def _load_json_report(path: Path, stdout: str) -> dict[str, object]:
 
 
 def _assertion_results(report: dict[str, object]) -> list[AssertionResult]:
+    structured = _structured_assertion_results(report)
+    if structured:
+        return structured
     results: list[AssertionResult] = []
     for step in _walk_values(report, "steps"):
         if not isinstance(step, dict):
@@ -162,6 +168,88 @@ def _assertion_results(report: dict[str, object]) -> list[AssertionResult]:
     return results
 
 
+def _step_results(report: dict[str, object]) -> list[StepResult]:
+    results: list[StepResult] = []
+    for item in _json_attachment_items(report, "maf-step-results"):
+        if not isinstance(item, dict):
+            continue
+        step_id = item.get("step_id")
+        action = item.get("action")
+        if step_id is None or action is None:
+            continue
+        results.append(
+            StepResult(
+                step_id=str(step_id),
+                action=str(action),
+                status=_evidence_status(item.get("status")),
+                url=_stringify_evidence(item.get("url")),
+                locator=_optional_evidence(item.get("locator")),
+                error=_optional_evidence(item.get("error")),
+            )
+        )
+    return results
+
+
+def _structured_assertion_results(report: dict[str, object]) -> list[AssertionResult]:
+    results: list[AssertionResult] = []
+    for item in _json_attachment_items(report, "maf-assertion-results"):
+        if not isinstance(item, dict):
+            continue
+        assertion_id = item.get("assertion_id")
+        if assertion_id is None:
+            continue
+        results.append(
+            AssertionResult(
+                assertion_id=str(assertion_id),
+                status=_evidence_status(item.get("status")),
+                expected=_stringify_evidence(item.get("expected")),
+                actual=_stringify_evidence(item.get("actual")),
+                url=_stringify_evidence(item.get("url")),
+                locator=_optional_evidence(item.get("locator")),
+                error=_optional_evidence(item.get("error")),
+            )
+        )
+    return results
+
+
+def _evidence_status(value: object) -> Literal["passed", "failed", "skipped"]:
+    status = str(value)
+    if status == "passed":
+        return "passed"
+    if status == "skipped":
+        return "skipped"
+    return "failed"
+
+
+def _stringify_evidence(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    except TypeError:
+        return str(value)
+
+
+def _optional_evidence(value: object) -> str | None:
+    if value is None:
+        return None
+    return _stringify_evidence(value)
+
+
+def _final_url(
+    step_results: list[StepResult], assertion_results: list[AssertionResult]
+) -> str:
+    for assertion_result in reversed(assertion_results):
+        if assertion_result.url:
+            return assertion_result.url
+    for step_result in reversed(step_results):
+        if step_result.url:
+            return step_result.url
+    return ""
+
+
 def _walk_values(value: object, key: str) -> list[object]:
     found: list[object] = []
     if isinstance(value, dict):
@@ -178,6 +266,26 @@ def _walk_values(value: object, key: str) -> list[object]:
 
 def _attachment_values(report: dict[str, object], name: str) -> list[str]:
     values: list[str] = []
+    for payload in _attachment_payloads(report, name):
+        if isinstance(payload, list):
+            values.extend(str(item) for item in payload)
+        else:
+            values.append(_stringify_evidence(payload))
+    return values
+
+
+def _json_attachment_items(report: dict[str, object], name: str) -> list[object]:
+    items: list[object] = []
+    for payload in _attachment_payloads(report, name):
+        if isinstance(payload, list):
+            items.extend(payload)
+        else:
+            items.append(payload)
+    return items
+
+
+def _attachment_payloads(report: dict[str, object], name: str) -> list[object]:
+    payloads: list[object] = []
     for attachments in _walk_values(report, "attachments"):
         if not isinstance(attachments, dict) or attachments.get("name") != name:
             continue
@@ -196,8 +304,7 @@ def _attachment_values(report: dict[str, object], name: str) -> list[str]:
         try:
             payload = json.loads(raw)
         except json.JSONDecodeError:
-            values.append(raw)
+            payloads.append(raw)
         else:
-            if isinstance(payload, list):
-                values.extend(str(item) for item in payload)
-    return values
+            payloads.append(payload)
+    return payloads

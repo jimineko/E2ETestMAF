@@ -30,6 +30,17 @@ class AssertionResult(BaseModel):
     status: Literal["passed", "failed", "skipped"]
     expected: str = ""
     actual: str = ""
+    url: str = ""
+    locator: str | None = None
+    error: str | None = None
+
+
+class StepResult(BaseModel):
+    step_id: str
+    action: str
+    status: Literal["passed", "failed", "skipped"]
+    url: str = ""
+    locator: str | None = None
     error: str | None = None
 
 
@@ -38,7 +49,9 @@ class TrialRunResult(BaseModel):
     scenario_id: str
     code_hash: str
     status: Literal["passed", "failed", "blocked"]
+    step_results: list[StepResult] = Field(default_factory=list)
     assertion_results: list[AssertionResult] = Field(default_factory=list)
+    final_url: str = ""
     screenshot_paths: list[str] = Field(default_factory=list)
     trace_path: str | None = None
     console_errors: list[str] = Field(default_factory=list)
@@ -61,6 +74,9 @@ class GeneratedTestAsset(BaseModel):
     spec_hash: str
     code_hash: str
     generator_version: str
+    generation_provider: str | None = None
+    generation_model: str | None = None
+    review_history_path: Path | None = None
     validated: bool = False
     status: TestLifecycleStatus = TestLifecycleStatus.GENERATED
     generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

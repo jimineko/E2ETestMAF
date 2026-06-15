@@ -6,8 +6,10 @@ from pathlib import Path
 from uuid import uuid4
 
 from maf_e2e.domain.assets import GeneratedTestAsset
+from maf_e2e.domain.failures import FailureCategory
 from maf_e2e.domain.regression import RegressionRun, ScenarioRunResult, TargetEnvironment
 from maf_e2e.domain.specification import TestLifecycleStatus
+from maf_e2e.failure_analysis import analyze_failure
 from maf_e2e.process import run_process
 from maf_e2e.trial_runner import TrialRunner
 
@@ -22,6 +24,7 @@ class RegressionRunner:
         environment: TargetEnvironment,
         *,
         scenario_ids: set[str] | None = None,
+        classify_failures: bool = True,
     ) -> RegressionRun:
         run_id = uuid4().hex
         output_root = self.repository_root / ".maf-e2e" / "regression" / run_id
@@ -51,8 +54,18 @@ class RegressionRunner:
                 code_path,
                 artifact_dir=output_root / asset.scenario_id,
             )
+            analysis = (
+                analyze_failure(trial)
+                if classify_failures and trial.status == "failed"
+                else None
+            )
             run.scenario_results.append(
-                ScenarioRunResult(scenario_id=asset.scenario_id, status=trial.status, trial=trial)
+                ScenarioRunResult(
+                    scenario_id=asset.scenario_id,
+                    status=trial.status,
+                    trial=trial,
+                    analysis=analysis,
+                )
             )
         run.completed_at = datetime.now(UTC)
         run.report_path = output_root / "regression.json"
@@ -72,6 +85,12 @@ class RegressionRunner:
 def regression_exit_code(run: RegressionRun) -> int:
     if any(result.status == "blocked" for result in run.scenario_results):
         return 3
+    if any(
+        result.analysis is not None
+        and result.analysis.category == FailureCategory.TEST_MAINTENANCE
+        for result in run.scenario_results
+    ):
+        return 2
     if any(result.status == "failed" for result in run.scenario_results):
         return 1
     return 0
@@ -80,3 +99,23 @@ def regression_exit_code(run: RegressionRun) -> int:
 def load_regression_run(path: Path) -> RegressionRun:
     payload = json.loads(path.read_text(encoding="utf-8"))
     return RegressionRun.model_validate(payload)
+
+
+def find_latest_successful_result(
+    repository_root: Path, scenario_id: str
+) -> tuple[RegressionRun, ScenarioRunResult] | None:
+    regression_root = repository_root / ".maf-e2e" / "regression"
+    if not regression_root.exists():
+        return None
+    matches: list[tuple[RegressionRun, ScenarioRunResult]] = []
+    for report_path in sorted(regression_root.glob("**/regression.json")):
+        try:
+            run = load_regression_run(report_path)
+        except (OSError, ValueError):
+            continue
+        for result in run.scenario_results:
+            if result.scenario_id == scenario_id and result.status == "passed":
+                matches.append((run, result))
+    if not matches:
+        return None
+    return max(matches, key=lambda item: item[0].completed_at or item[0].started_at)

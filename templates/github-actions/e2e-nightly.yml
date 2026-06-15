@@ -10,10 +10,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install "git+https://github.com/jimineko/E2ETestMAF.git"
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: maf-e2e regression --target-repo . --environment staging

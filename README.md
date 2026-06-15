@@ -123,6 +123,8 @@ The approval boundary is deliberate: the TypeScript source that passes the trial
 | Review | `request-changes` | Return a scenario for another authoring pass |
 | Review | `reject` | Remove the draft and retain an audit copy under `.maf-e2e/rejected` |
 | Publish | `publish` | Copy an approved scenario into the target repository's `e2e/**` tree |
+| Lifecycle | `disable` / `retire` | Stop selecting an active scenario without deleting audit history |
+| Lifecycle | `new-version` | Create a new draft version for changed scenario meaning or expected results |
 | Run | `regression` | Execute active scenarios without an Agent |
 | Maintain | `analyze-failure` | Classify saved failure evidence, optionally with a new Agent investigation |
 | Maintain | `repair` | Validate a bounded code repair and optionally open a GitHub pull request |

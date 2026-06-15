@@ -10,7 +10,11 @@ from typing import Any
 
 from maf_e2e.domain.assets import GeneratedTestAsset, TrialRunResult, ValidationResult
 from maf_e2e.domain.specification import TestLifecycleStatus, TestSpecification
-from maf_e2e.playwright_codegen import GENERATOR_VERSION, generated_code_hash
+from maf_e2e.playwright_codegen import (
+    GENERATOR_VERSION,
+    generate_playwright_test,
+    generated_code_hash,
+)
 
 
 class AssetStore:
@@ -29,6 +33,9 @@ class AssetStore:
         source: str,
         *,
         code_version: int = 1,
+        generated_at: datetime | None = None,
+        generation_provider: str | None = None,
+        generation_model: str | None = None,
     ) -> GeneratedTestAsset:
         hashed = spec.with_hash()
         draft_dir = self._safe_child(self.draft_root, hashed.scenario_id)
@@ -45,7 +52,11 @@ class AssetStore:
             spec_hash=hashed.spec_hash,
             code_hash=generated_code_hash(source),
             generator_version=GENERATOR_VERSION,
+            generation_provider=generation_provider,
+            generation_model=generation_model,
+            review_history_path=draft_dir / "approvals.json",
             status=TestLifecycleStatus.GENERATED,
+            generated_at=generated_at or datetime.now(UTC),
         )
         self.save_metadata(asset)
         return asset
@@ -64,6 +75,64 @@ class AssetStore:
     def save_metadata(self, asset: GeneratedTestAsset) -> None:
         path = self._safe_child(asset.draft_path, "metadata.json")
         _atomic_write(path, asset.model_dump_json(indent=2))
+
+    def set_lifecycle_status(
+        self,
+        scenario_id: str,
+        status: TestLifecycleStatus,
+        *,
+        actor: str,
+        comment: str | None = None,
+    ) -> GeneratedTestAsset:
+        if status not in {TestLifecycleStatus.DISABLED, TestLifecycleStatus.RETIRED}:
+            raise ValueError("Only disabled and retired lifecycle transitions are supported")
+        asset = self.load_asset(scenario_id)
+        updated = asset.model_copy(update={"status": status, "updated_at": datetime.now(UTC)})
+        self.save_metadata(updated)
+        self._save_published_metadata(updated)
+        self._append_lifecycle_event(
+            scenario_id,
+            {
+                "action": status.value,
+                "actor": actor,
+                "comment": comment,
+                "recorded_at": datetime.now(UTC).isoformat(),
+            },
+        )
+        return updated
+
+    def create_new_version(
+        self,
+        scenario_id: str,
+        *,
+        actor: str,
+        comment: str | None = None,
+    ) -> GeneratedTestAsset:
+        asset = self.load_asset(scenario_id)
+        spec = self.load_specification(scenario_id)
+        next_spec = spec.model_copy(
+            update={
+                "version": spec.version + 1,
+                "status": TestLifecycleStatus.DRAFT,
+            }
+        ).with_hash()
+        new_asset = self.save_draft(
+            next_spec,
+            generate_playwright_test(next_spec),
+            code_version=asset.code_version + 1,
+        )
+        self._append_lifecycle_event(
+            scenario_id,
+            {
+                "action": "new_version",
+                "actor": actor,
+                "comment": comment,
+                "from_spec_version": asset.spec_version,
+                "to_spec_version": new_asset.spec_version,
+                "recorded_at": datetime.now(UTC).isoformat(),
+            },
+        )
+        return new_asset
 
     def save_validation(self, scenario_id: str, result: ValidationResult) -> GeneratedTestAsset:
         draft_dir = self.draft_dir(scenario_id)
@@ -114,6 +183,53 @@ class AssetStore:
             json.dumps(value, ensure_ascii=False, indent=2, default=str),
         )
 
+    def repair_dir(self, scenario_id: str, proposal_id: str) -> Path:
+        if Path(proposal_id).name != proposal_id:
+            raise ValueError("proposal_id must not contain a path")
+        path = self._safe_child(self.draft_dir(scenario_id), "repairs", proposal_id)
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def save_repair_candidate(
+        self, scenario_id: str, proposal_id: str, source: str
+    ) -> Path:
+        path = self.repair_dir(scenario_id, proposal_id) / "generated.spec.ts"
+        _atomic_write(path, source)
+        return path
+
+    def save_repair_validation(
+        self, scenario_id: str, proposal_id: str, result: ValidationResult
+    ) -> None:
+        _atomic_write(
+            self.repair_dir(scenario_id, proposal_id) / "validation-result.json",
+            result.model_dump_json(indent=2),
+        )
+
+    def save_repair_trial(
+        self, scenario_id: str, proposal_id: str, result: TrialRunResult
+    ) -> None:
+        _atomic_write(
+            self.repair_dir(scenario_id, proposal_id) / "trial-result.json",
+            result.model_dump_json(indent=2),
+        )
+
+    def save_repair_related_trial(
+        self,
+        scenario_id: str,
+        proposal_id: str,
+        related_scenario_id: str,
+        result: TrialRunResult,
+    ) -> None:
+        if Path(related_scenario_id).name != related_scenario_id:
+            raise ValueError("related_scenario_id must not contain a path")
+        _atomic_write(
+            self.repair_dir(scenario_id, proposal_id)
+            / "related"
+            / related_scenario_id
+            / "trial-result.json",
+            result.model_dump_json(indent=2),
+        )
+
     def reject(self, scenario_id: str) -> Path:
         draft_dir = self.draft_dir(scenario_id)
         timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
@@ -135,6 +251,45 @@ class AssetStore:
             GeneratedTestAsset.model_validate_json(path.read_text(encoding="utf-8"))
             for path in sorted(self.draft_root.glob("*/metadata.json"))
         ]
+
+    def list_active_assets(self) -> list[GeneratedTestAsset]:
+        metadata_root = self.repository_root / "e2e" / "metadata"
+        if not metadata_root.exists():
+            return []
+        assets = [
+            GeneratedTestAsset.model_validate_json(path.read_text(encoding="utf-8"))
+            for path in sorted(metadata_root.glob("**/*.json"))
+        ]
+        return [asset for asset in assets if asset.status == TestLifecycleStatus.ACTIVE]
+
+    def _save_published_metadata(self, asset: GeneratedTestAsset) -> None:
+        metadata_path = (
+            self.repository_root / "e2e" / "metadata" / asset.feature / f"{asset.scenario_id}.json"
+        )
+        if not metadata_path.exists():
+            return
+        portable = asset
+        updates: dict[str, Path] = {}
+        if asset.draft_path.is_absolute():
+            updates["draft_path"] = asset.draft_path.relative_to(self.repository_root)
+        if asset.review_history_path is not None and asset.review_history_path.is_absolute():
+            updates["review_history_path"] = asset.review_history_path.relative_to(
+                self.repository_root
+            )
+        if updates:
+            portable = asset.model_copy(update=updates)
+        _atomic_write(metadata_path, portable.model_dump_json(indent=2))
+
+    def _append_lifecycle_event(self, scenario_id: str, event: dict[str, Any]) -> None:
+        path = self.draft_dir(scenario_id) / "lifecycle-events.json"
+        if path.exists():
+            events = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(events, list):
+                events = []
+        else:
+            events = []
+        events.append(event)
+        _atomic_write(path, json.dumps(events, ensure_ascii=False, indent=2, default=str))
 
     def prune_expired(self, retention_days: int) -> list[Path]:
         if retention_days < 1:

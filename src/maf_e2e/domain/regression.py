@@ -8,6 +8,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from maf_e2e.domain.assets import TrialRunResult
+from maf_e2e.domain.failures import FailureAnalysis
 
 
 class TargetEnvironment(StrEnum):
@@ -20,6 +21,7 @@ class ScenarioRunResult(BaseModel):
     scenario_id: str
     status: Literal["passed", "failed", "blocked"]
     trial: TrialRunResult
+    analysis: FailureAnalysis | None = None
 
 
 class RegressionRun(BaseModel):

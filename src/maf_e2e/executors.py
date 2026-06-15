@@ -116,9 +116,18 @@ class DiscoveryExecutor(SessionExecutor):
         review_history = message.review_history if isinstance(message, StageRetry) else []
         prompt = f"""Explore this web application for E2E test planning.
 Target: {run.request.target_url}
+Environment: {run.request.target_environment}
 Objective: {run.request.objective}
 Policies: {run.request.policies or ["No additional policies"]}
-Return the discovered pages, user flows, authentication requirement, risks, and next-step hints.
+Exploration limits:
+- Maximum pages: {run.request.max_pages}
+- Maximum actions: {run.request.max_actions}
+- Maximum duration seconds: {run.request.max_duration_seconds}
+Return discovered pages, page transitions, user flows, required test data,
+unexplored areas, console errors, network errors, destructive action risks,
+authentication requirement, risks, and next-step hints.
+Do not exceed the exploration limits; if a limit prevents coverage, record the gap in
+unexplored_areas.
 Keep the hints short and action-oriented so the generator can decide what to inspect next.
 """
         try:

@@ -13,16 +13,25 @@ def test_repair_pull_request_body_requires_human_review() -> None:
         spec_version=1,
         base_code_version=1,
         reason="Locator changed",
+        changed_files=["e2e/generated/login.spec.ts"],
+        diff=["--- approved", "+++ proposed", "-old", "+new"],
+        base_code_hash="base-hash",
+        proposed_code_hash="proposed-hash",
         semantic_change_detected=False,
         expected_result_changed=False,
         confidence=0.8,
         validation_results=["lint: passed", "repair trial: passed"],
+        artifact_paths=[".maf-e2e/drafts/login/repairs/proposal/trial-result.json"],
     )
 
     body = _pull_request_body(proposal)
 
     assert "never merged automatically" in body
     assert "Expected result changed: `False`" in body
+    assert "Base code hash: `base-hash`" in body
+    assert "proposed-hash" in body
+    assert "e2e/generated/login.spec.ts" in body
+    assert "trial-result.json" in body
 
 
 @pytest.mark.parametrize("branch", ["../escape", "-option", "bad branch"])

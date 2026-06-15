@@ -34,7 +34,7 @@ Trial artifact directories can contain:
 
 ## Approval identity
 
-The specification hash is SHA-256 over normalized model JSON. The code hash is SHA-256 over the UTF-8 TypeScript source.
+The specification hash is SHA-256 over normalized model JSON. The code hash is SHA-256 over the UTF-8 TypeScript source after removing the informational `// generated_at:` header line. This keeps approvals deterministic while still recording generation time in the source header and asset metadata.
 
 Approval records include the scenario ID, specification and code versions, action, reviewer, timestamp, and both hashes. Approval is invalidated when either reviewed input changes.
 

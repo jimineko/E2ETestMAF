@@ -2,6 +2,7 @@ from maf_e2e.domain.approval import ApprovalAction, ScenarioApproval
 from maf_e2e.domain.assets import (
     AssertionResult,
     GeneratedTestAsset,
+    StepResult,
     TrialRunResult,
     ValidationCheck,
     ValidationResult,
@@ -39,6 +40,7 @@ __all__ = [
     "RepairProposal",
     "ScenarioApproval",
     "ScenarioRunResult",
+    "StepResult",
     "StructuredStep",
     "TargetEnvironment",
     "TestLifecycleStatus",

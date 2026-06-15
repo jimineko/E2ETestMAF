@@ -25,9 +25,9 @@ RUN uv sync --frozen --no-dev --extra azure-monitor --extra hyperlight-runtime
 
 RUN groupadd --gid 10001 mafe2e \
     && useradd --uid 10001 --gid mafe2e --create-home --shell /usr/sbin/nologin mafe2e \
-    && mkdir -p /app/artifacts /app/checkpoints /app/auth \
-    && chown -R mafe2e:mafe2e /app/artifacts /app/checkpoints /app/auth
+    && mkdir -p /app/artifacts /app/checkpoints /app/auth /app/.maf-e2e \
+    && chown -R mafe2e:mafe2e /app/artifacts /app/checkpoints /app/auth /app/.maf-e2e
 
 USER mafe2e
 
-CMD ["maf-e2e"]
+CMD ["maf-e2e", "regression", "--target-repo", "/app", "--environment", "staging"]

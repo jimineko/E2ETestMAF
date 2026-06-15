@@ -51,6 +51,36 @@ uv run maf-e2e publish \
 
 Publish requires the latest review action to be `approve`. It recalculates the specification and code hashes and exits `4` for a configuration, path, or approval-integrity error.
 
+## Lifecycle
+
+Disable or retire an active scenario without deleting its audit history:
+
+```bash
+uv run maf-e2e disable \
+  --target-repo /path/to/web-app \
+  --scenario-id login-page \
+  --reviewer reviewer@example.com \
+  --comment "Temporarily blocked by upstream auth outage"
+
+uv run maf-e2e retire \
+  --target-repo /path/to/web-app \
+  --scenario-id old-checkout-flow \
+  --reviewer reviewer@example.com
+```
+
+Create a new draft version when the scenario meaning or expected result must change:
+
+```bash
+uv run maf-e2e new-version \
+  --target-repo /path/to/web-app \
+  --scenario-id login-page \
+  --reviewer reviewer@example.com \
+  --comment "Expected destination changed"
+```
+
+The new draft must pass validation, trial, review, approval, and publish again. Existing
+published metadata remains hash-locked until the new version is approved and published.
+
 ## Regression
 
 ```bash
@@ -60,13 +90,16 @@ uv run maf-e2e regression \
 ```
 
 Use repeatable `--scenario-id` options to select scenarios. Only metadata with lifecycle status `ACTIVE` is executed.
+By default, failed trials are classified from saved runner evidence. Use `--no-classify-failures`
+to keep regression as a pure fixed-code execution command where every test failure exits `1`.
 
 Regression exit codes:
 
 | Code | Meaning |
 |---|---|
 | `0` | All selected scenarios passed |
-| `1` | At least one scenario failed |
+| `1` | At least one scenario failed and was not classified as test maintenance |
+| `2` | At least one failed scenario was classified as a test-maintenance candidate |
 | `3` | At least one scenario was blocked or timed out |
 | `4` | Configuration or stored-asset error |
 
@@ -79,9 +112,14 @@ Classify existing trial evidence without an Agent:
 ```bash
 uv run maf-e2e analyze-failure \
   --trial-result /path/to/trial-result.json \
+  --target-repo /path/to/web-app \
   --previous-passed \
   --diagnostic "The submit button locator no longer resolves"
 ```
+
+When `--target-repo` is provided, the command searches
+`.maf-e2e/regression/**/regression.json` for the latest passing result for the same
+scenario. `--previous-passed` remains available for manual evidence.
 
 Run a new Agent-assisted UI investigation:
 

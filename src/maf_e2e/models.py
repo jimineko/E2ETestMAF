@@ -9,6 +9,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator
 
+TargetEnvironmentName = Literal["local", "development", "staging"]
+
 
 class Severity(StrEnum):
     INFO = "info"
@@ -38,6 +40,10 @@ class E2ETestRequest(BaseModel):
     allowed_origins: list[str] = Field(default_factory=list)
     max_scenarios: int = Field(default=5, ge=1, le=20)
     max_steps: int = Field(default=20, ge=1, le=100)
+    max_pages: int = Field(default=20, ge=1, le=200)
+    max_actions: int = Field(default=100, ge=1, le=1000)
+    max_duration_seconds: int = Field(default=600, ge=1, le=7200)
+    target_environment: TargetEnvironmentName = "local"
     target_repository_root: Path | None = None
     max_trial_repairs: int = Field(default=2, ge=0, le=5)
 
@@ -85,9 +91,22 @@ class PageObservation(BaseModel):
     interactive_elements: list[str] = Field(default_factory=list)
 
 
+class PageTransition(BaseModel):
+    source_url: str
+    target_url: str
+    trigger: str = ""
+    method: Literal["link", "button", "form", "redirect", "script", "unknown"] = "unknown"
+
+
 class DiscoveryFindings(BaseModel):
     pages: list[PageObservation] = Field(default_factory=list)
+    transitions: list[PageTransition] = Field(default_factory=list)
     user_flows: list[str] = Field(default_factory=list)
+    required_test_data: list[str] = Field(default_factory=list)
+    unexplored_areas: list[str] = Field(default_factory=list)
+    console_errors: list[str] = Field(default_factory=list)
+    network_errors: list[str] = Field(default_factory=list)
+    destructive_action_risks: list[str] = Field(default_factory=list)
     auth_required: bool = False
     risks: list[str] = Field(default_factory=list)
     next_step_hints: list[str] = Field(default_factory=list)

@@ -13,6 +13,10 @@ def analyze_failure(
     evidence = [item for item in [result.error, *(diagnostic_evidence or [])] if item]
     text = "\n".join(evidence).lower()
     category, confidence, action = _classify(text, previous_passed=previous_passed)
+    if previous_passed:
+        confidence = min(confidence + 0.05, 0.95)
+        if not any("previous passing" in item.lower() for item in evidence):
+            evidence.append("Previous passing result is available for this scenario.")
     return FailureAnalysis(
         scenario_id=result.scenario_id,
         category=category,

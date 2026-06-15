@@ -211,7 +211,7 @@ write_files:
     permissions: '0644'
     content: |
       [Unit]
-      Description=MAF Hyperlight autonomous E2E testing
+      Description=MAF fixed-code E2E regression testing
       After=docker.service network-online.target
       Requires=docker.service
 
@@ -220,7 +220,7 @@ write_files:
       ExecStartPre=/usr/bin/az login --identity --username {0}
       ExecStartPre=/usr/bin/az acr login --name {9}
       ExecStartPre=-/usr/bin/docker rm -f maf-e2e
-      ExecStart=/usr/bin/docker run --rm --name maf-e2e --device=/dev/kvm:/dev/kvm --env-file /etc/maf-e2e.env -v /var/lib/maf-e2e/artifacts:/app/artifacts -v /var/lib/maf-e2e/checkpoints:/app/checkpoints {10}
+      ExecStart=/usr/bin/docker run --rm --name maf-e2e --device=/dev/kvm:/dev/kvm --env-file /etc/maf-e2e.env -v /var/lib/maf-e2e/artifacts:/app/artifacts -v /var/lib/maf-e2e/checkpoints:/app/checkpoints {10} maf-e2e regression --target-repo /app --environment staging
       TimeoutStartSec=2h
   - path: /etc/systemd/system/maf-e2e.timer
     permissions: '0644'

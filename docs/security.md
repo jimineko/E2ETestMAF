@@ -21,6 +21,7 @@ A successful direct Agent browser action is evidence for discovery or diagnosis,
 - Approval binds a scenario to exact specification and source hashes.
 - Publish recomputes hashes and rejects post-approval changes.
 - Regression reads only `ACTIVE` metadata.
+- CLI entry points accept only `local`, `development`, or `staging` target environments and reject `production` during input validation.
 - Expected-result changes are semantic changes, not test maintenance.
 - Repair publishing uses a branch and pull request and never performs automatic merge.
 

@@ -19,7 +19,12 @@ def test_approval_requires_same_passing_code_and_publish_is_hash_locked(tmp_path
     store = AssetStore(tmp_path)
     spec = sample_spec()
     source = generate_playwright_test(spec)
-    asset = store.save_draft(spec, source)
+    asset = store.save_draft(
+        spec,
+        source,
+        generation_provider="gemini",
+        generation_model="gemini-2.5-flash-lite",
+    )
     approvals = ApprovalStore(store)
 
     with pytest.raises(FileNotFoundError):
@@ -50,6 +55,12 @@ def test_approval_requires_same_passing_code_and_publish_is_hash_locked(tmp_path
     assert published.read_text(encoding="utf-8") == source
     assert store.load_asset(spec.scenario_id).status == LifecycleStatus.ACTIVE
     assert store.load_asset(spec.scenario_id).published_path == published.relative_to(tmp_path)
+    assert store.load_asset(spec.scenario_id).generation_provider == "gemini"
+    assert store.load_asset(spec.scenario_id).generation_model == "gemini-2.5-flash-lite"
+    published_metadata = (
+        tmp_path / "e2e" / "metadata" / spec.feature / f"{spec.scenario_id}.json"
+    ).read_text(encoding="utf-8")
+    assert "review_history_path" in published_metadata
 
     published.unlink()
     (asset.draft_path / "generated.spec.ts").write_text(source + "// changed\n", encoding="utf-8")

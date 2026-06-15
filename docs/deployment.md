@@ -9,10 +9,18 @@ cp .env.example .env
 ./scripts/e2e-compose
 ```
 
-Pass CLI arguments after the launcher when using the legacy flow or another command supported by the container image:
+By default, the container image runs fixed-code regression:
 
 ```bash
-./scripts/e2e-compose --target-url https://example.com
+maf-e2e regression --target-repo /app --environment staging
+```
+
+Pass CLI arguments after the launcher to run another explicit command. Calling the
+launcher without a subcommand after `maf-e2e` is the legacy autonomous investigation
+path and cannot approve or publish regression assets:
+
+```bash
+./scripts/e2e-compose --target-url https://example.com --objective "Investigate login"
 ```
 
 When the target application runs on the host, use `host.docker.internal` from the container:
@@ -32,7 +40,8 @@ MAF_E2E_COMPOSE_KVM=required \
 ./scripts/e2e-compose
 ```
 
-At shutdown, the launcher copies container output into local `artifacts/` and `checkpoints/` directories.
+At shutdown, the launcher copies container output into local `artifacts/`,
+`checkpoints/`, and `.maf-e2e/regression/` directories.
 
 ### macOS
 
@@ -51,9 +60,9 @@ Docker Desktop cannot expose `/dev/kvm` in every WSL2 configuration. The launche
 
 ## Agent-free nightly regression
 
-`templates/github-actions/e2e-nightly.yml` is a starting point for a target application repository. It installs Node dependencies and Chromium, runs `maf-e2e regression`, and uploads `.maf-e2e/regression/` plus Playwright reports.
+`templates/github-actions/e2e-nightly.yml` is a starting point for a target application repository. It installs Python 3.13, E2ETestMAF, Node dependencies, and Chromium, runs `maf-e2e regression`, and uploads `.maf-e2e/regression/` plus Playwright reports.
 
-The target repository must install E2ETestMAF before invoking the command. Adapt the template to the project's package or checkout strategy. No model provider or Agent secret is required for regression.
+No model provider or Agent secret is required for this nightly regression path. Add those settings only to separate authoring or investigation workflows.
 
 ## Hyperlight and RAMPART workflow
 
@@ -61,7 +70,7 @@ The target repository must install E2ETestMAF before invoking the command. Adapt
 
 ## Azure VM deployment
 
-The infrastructure under `infra/` provisions a private KVM-capable VM, outbound NAT, identity, and a systemd timer.
+The infrastructure under `infra/` provisions a private KVM-capable VM, outbound NAT, identity, and a systemd timer. The timer runs `maf-e2e regression --target-repo /app --environment staging`; legacy autonomous investigation remains an explicit manual command.
 
 1. Copy `infra/main.bicepparam.example` to `infra/main.bicepparam` and set the required values, including the SSH public key.
 2. Deploy the Bicep template.

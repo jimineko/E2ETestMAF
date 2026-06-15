@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from contextlib import suppress
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -146,8 +147,16 @@ label, text, and test-id locators. Keep expected-result wording in source_expect
 
 
 class PlaywrightCodeGeneratorExecutor(Executor):
-    def __init__(self, repository_root: Path) -> None:
+    def __init__(
+        self,
+        repository_root: Path,
+        *,
+        generation_provider: str | None = None,
+        generation_model: str | None = None,
+    ) -> None:
         self.assets = AssetStore(repository_root)
+        self.generation_provider = generation_provider
+        self.generation_model = generation_model
         super().__init__(id="playwright_codegen")
 
     @handler
@@ -162,11 +171,15 @@ class PlaywrightCodeGeneratorExecutor(Executor):
                 existing_version = 0
                 with suppress(FileNotFoundError):
                     existing_version = self.assets.load_asset(spec.scenario_id).code_version
+                generated_at = datetime.now(UTC)
                 assets.append(
                     self.assets.save_draft(
                         spec,
-                        generate_playwright_test(spec),
+                        generate_playwright_test(spec, generated_at=generated_at),
                         code_version=existing_version + 1,
+                        generated_at=generated_at,
+                        generation_provider=self.generation_provider,
+                        generation_model=self.generation_model,
                     )
                 )
             await ctx.send_message(GeneratedBatch(specifications=batch, assets=assets))
@@ -392,6 +405,8 @@ def build_authoring_workflow(
     use_native_response_format: bool = True,
     validation_timeout_seconds: int = 120,
     trial_timeout_seconds: int = 300,
+    generation_provider: str | None = None,
+    generation_model: str | None = None,
 ) -> Workflow:
     orchestrator = OrchestratorExecutor()
     discovery = DiscoveryExecutor(
@@ -407,7 +422,11 @@ def build_authoring_workflow(
         structured_retries=structured_retries,
         use_native_response_format=use_native_response_format,
     )
-    codegen = PlaywrightCodeGeneratorExecutor(repository_root)
+    codegen = PlaywrightCodeGeneratorExecutor(
+        repository_root,
+        generation_provider=generation_provider,
+        generation_model=generation_model,
+    )
     validation = CodeValidationExecutor(repository_root, validation_timeout_seconds)
     trial = TrialRunExecutor(repository_root, trial_timeout_seconds)
     judge = TrialJudgeExecutor()

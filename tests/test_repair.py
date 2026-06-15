@@ -38,7 +38,16 @@ async def test_repair_accepts_code_only_change_for_maintenance(tmp_path: Path) -
 
     assert proposal.semantic_change_detected is False
     assert proposal.expected_result_changed is False
-    assert assets.load_asset(spec.scenario_id).code_version == asset.code_version + 1
+    assert proposal.base_code_version == asset.code_version
+    assert proposal.base_code_hash == asset.code_hash
+    assert proposal.proposed_code_hash != asset.code_hash
+    assert proposal.diff
+    assert any(path.endswith("validation-result.json") for path in proposal.artifact_paths)
+    assert proposal.proposed_code_path is not None
+    assert Path(proposal.proposed_code_path).exists()
+    assert Path(proposal.proposed_code_path).parent.parent.name == "repairs"
+    assert assets.load_asset(spec.scenario_id).code_version == asset.code_version
+    assert assets.load_source(spec.scenario_id) == source
 
 
 async def test_repair_rejects_expected_result_change(tmp_path: Path) -> None:
@@ -64,6 +73,86 @@ async def test_repair_rejects_expected_result_change(tmp_path: Path) -> None:
             source.replace("Email", "Email address"),
             proposed_spec=changed_spec,
         )
+
+
+async def test_proposed_code_rejects_assertion_semantic_change(
+    tmp_path: Path,
+) -> None:
+    make_fake_node_repository(tmp_path)
+    assets = AssetStore(tmp_path)
+    spec = sample_spec()
+    source = generate_playwright_test(spec)
+    assets.save_draft(spec, source)
+    analysis = FailureAnalysis(
+        scenario_id=spec.scenario_id,
+        category=FailureCategory.TEST_MAINTENANCE,
+        confidence=0.8,
+        recommended_action="Update locator",
+    )
+
+    with pytest.raises(SemanticChangeError, match=r"assertions|classified"):
+        await RepairService(assets).propose(
+            spec.scenario_id,
+            analysis,
+            source.replace("toBeVisible()", "toBeHidden()"),
+        )
+
+
+async def test_proposed_code_rejects_test_data_change(tmp_path: Path) -> None:
+    make_fake_node_repository(tmp_path)
+    assets = AssetStore(tmp_path)
+    spec = sample_spec()
+    source = generate_playwright_test(spec)
+    assets.save_draft(spec, source)
+    analysis = FailureAnalysis(
+        scenario_id=spec.scenario_id,
+        category=FailureCategory.TEST_MAINTENANCE,
+        confidence=0.8,
+        recommended_action="Update locator",
+    )
+
+    with pytest.raises(SemanticChangeError, match=r"assertions|classified"):
+        await RepairService(assets).propose(
+            spec.scenario_id,
+            analysis,
+            source.replace("user@example.com", "attacker@example.com"),
+        )
+
+
+async def test_structured_diagnostic_repair_can_update_assertion_locator(
+    tmp_path: Path,
+) -> None:
+    make_fake_node_repository(tmp_path)
+    assets = AssetStore(tmp_path)
+    spec = sample_spec()
+    source = generate_playwright_test(spec)
+    assets.save_draft(spec, source)
+    changed = apply_locator_repairs(
+        spec,
+        [
+            LocatorRepair(
+                target_id="heading-visible",
+                locator=LocatorSpec(strategy="test_id", value="login-heading"),
+            )
+        ],
+    )
+    analysis = FailureAnalysis(
+        scenario_id=spec.scenario_id,
+        category=FailureCategory.TEST_MAINTENANCE,
+        confidence=0.8,
+        recommended_action="Update locator",
+    )
+
+    proposal = await RepairService(assets).propose(
+        spec.scenario_id,
+        analysis,
+        generate_playwright_test(changed, spec_hash_override=spec.spec_hash),
+        proposed_spec=changed,
+    )
+
+    assert proposal.proposed_code is not None
+    assert 'getByTestId("login-heading")' in proposal.proposed_code
+    assert assets.load_source(spec.scenario_id) == source
 
 
 def test_locator_only_spec_change_does_not_change_expected_result() -> None:

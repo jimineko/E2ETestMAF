@@ -192,6 +192,8 @@ class RuntimeResources:
             use_native_response_format=self.backend.use_native_response_format,
             validation_timeout_seconds=self.settings.authoring_timeout_seconds,
             trial_timeout_seconds=self.settings.trial_timeout_seconds,
+            generation_provider=self.settings.model_provider,
+            generation_model=_generation_model_name(self.settings),
         )
 
     def _workflow_tools(self) -> tuple[list[Any] | None, list[Any] | None]:
@@ -355,6 +357,18 @@ async def execute(
 async def execute_authoring(settings: Settings, request: E2ETestRequest) -> AuthoringResult:
     async with E2ETestRuntime(settings, request) as runtime:
         return await runtime.run_authoring()
+
+
+def _generation_model_name(settings: Settings) -> str | None:
+    if settings.model_provider == "azure_openai":
+        return settings.azure_openai_deployment
+    if settings.model_provider in {"gemini", "vertex_ai"}:
+        return settings.gemini_model
+    if settings.model_provider == "github_copilot":
+        return settings.github_copilot_model
+    if settings.model_provider == "codex_cli":
+        return settings.codex_model
+    return None
 
 
 async def execute_regression_diagnostic(
