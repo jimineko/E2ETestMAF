@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>E2E fixture login</title>
+  </head>
+  <body>
+    <main id="fixture-root">
+      <section id="login-panel">
+        <h1 data-testid="login-heading">Login</h1>
+        <form id="login-form">
+          <label>
+            Email
+            <input name="email" type="email" data-testid="email" required />
+          </label>
+          <label>
+            Password
+            <input name="password" type="password" data-testid="password" required />
+          </label>
+          <button type="submit" data-testid="login-button">Login</button>
+        </form>
+        <p role="alert" hidden></p>
+      </section>
+    </main>
+    <script>
+      const params = new URLSearchParams(location.search);
+      const variant = params.get("variant");
+      const heading = document.querySelector("h1");
+      const panel = document.querySelector("#login-panel");
+      const button = document.querySelector("button");
+      const alert = document.querySelector('[role="alert"]');
+
+      if (variant === "renamed") button.textContent = "Sign in";
+      if (variant === "dom") {
+        const wrapper = document.createElement("div");
+        wrapper.className = "new-layout-wrapper";
+        panel.parentNode.insertBefore(wrapper, panel);
+        wrapper.appendChild(panel);
+      }
+      if (variant === "locator") heading.removeAttribute("data-testid");
+      if (variant === "expired") {
+        alert.hidden = false;
+        alert.textContent = "Session expired";
+      }
+      if (variant === "network") fetch("/fixture-network-failure");
+
+      document.querySelector("form").addEventListener("submit", (event) => {
+        event.preventDefault();
+        const data = new FormData(event.currentTarget);
+        const email = data.get("email");
+        const password = data.get("password");
+        alert.hidden = false;
+        if (!email || !password) {
+          alert.textContent = "Test data is required";
+        } else if (email === "user@example.com" && password === "correct-password") {
+          alert.textContent = "Welcome";
+          document.body.dataset.authenticated = "true";
+        } else {
+          alert.textContent = "Invalid credentials";
+        }
+      });
+    </script>
+  </body>
+</html>

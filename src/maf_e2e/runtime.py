@@ -11,6 +11,7 @@ from agent_framework import MCPStdioTool
 from azure.identity.aio import DefaultAzureCredential
 
 from maf_e2e.artifacts import archive_run, blob_uri, upload_artifacts
+from maf_e2e.authoring_workflow import AuthoringResult, build_authoring_workflow
 from maf_e2e.codeact import (
     CodeActUnavailable,
     ToolAuditLog,
@@ -20,6 +21,8 @@ from maf_e2e.codeact import (
     preflight_hyperlight,
 )
 from maf_e2e.config import Settings
+from maf_e2e.domain.assets import TrialRunResult
+from maf_e2e.domain.failures import RegressionFailureDiagnostic
 from maf_e2e.models import (
     E2ETestReport,
     E2ETestRequest,
@@ -30,6 +33,10 @@ from maf_e2e.models import (
     TestPlan,
 )
 from maf_e2e.provider_backend import build_provider_backend
+from maf_e2e.regression_analysis_workflow import (
+    RegressionDiagnosticRequest,
+    build_regression_analysis_workflow,
+)
 from maf_e2e.workflow import build_browser_resume_workflow, build_e2e_test_workflow
 
 PLAYWRIGHT_ALLOWED_TOOLS = {
@@ -67,7 +74,14 @@ class GeminiCompatibleMCPStdioTool(MCPStdioTool):
 
 
 class RuntimeResources:
-    def __init__(self, settings: Settings, resource_id: str, *, target_url: str | None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        resource_id: str,
+        *,
+        target_url: str | None,
+        request_allowed_origins: list[str] | None = None,
+    ) -> None:
         self.settings = settings
         self.resource_id = resource_id
         self.target_url = target_url
@@ -84,7 +98,8 @@ class RuntimeResources:
         self.allowed_origins = {
             normalize_origin(origin)
             for origin in (
-                settings.playwright_allowed_origins
+                request_allowed_origins
+                or settings.playwright_allowed_origins
                 or ([target_url] if target_url is not None else [])
             )
         }
@@ -166,6 +181,19 @@ class RuntimeResources:
             use_native_response_format=self.backend.use_native_response_format,
         )
 
+    def authoring_workflow(self, *, repository_root: Path) -> Any:
+        discovery_tools, browser_tools = self._workflow_tools()
+        return build_authoring_workflow(
+            self.agents,
+            repository_root,
+            discovery_tools=discovery_tools,
+            diagnostic_tools=browser_tools,
+            structured_retries=self.settings.structured_output_retries,
+            use_native_response_format=self.backend.use_native_response_format,
+            validation_timeout_seconds=self.settings.authoring_timeout_seconds,
+            trial_timeout_seconds=self.settings.trial_timeout_seconds,
+        )
+
     def _workflow_tools(self) -> tuple[list[Any] | None, list[Any] | None]:
         if self.codeact_active:
             return None, None
@@ -205,7 +233,12 @@ class E2ETestRuntime:
     def __init__(self, settings: Settings, request: E2ETestRequest) -> None:
         self.settings = settings
         self.request = request
-        self.resources = RuntimeResources(settings, request.run_id, target_url=request.target_url)
+        self.resources = RuntimeResources(
+            settings,
+            request.run_id,
+            target_url=request.target_url,
+            request_allowed_origins=request.allowed_origins,
+        )
 
     async def __aenter__(self) -> E2ETestRuntime:
         try:
@@ -241,6 +274,25 @@ class E2ETestRuntime:
             raise RuntimeError(f"Workflow returned unexpected outputs: {outputs!r}")
 
         return await self._persist_report(outputs[0])
+
+    async def run_authoring(self) -> AuthoringResult:
+        repository_root = self.request.target_repository_root
+        if repository_root is None:
+            raise ValueError("Authoring requires target_repository_root")
+        if not self.request.expected_results:
+            raise ValueError("Authoring requires at least one expected result")
+        if self.settings.codeact_mode == "required" and self.resources.codeact_error is not None:
+            return AuthoringResult(
+                run_id=self.request.run_id,
+                status="blocked",
+                reason="CodeAct is required but unavailable.",
+            )
+        workflow = self.resources.authoring_workflow(repository_root=repository_root)
+        result = await workflow.run(self.request)
+        outputs = result.get_outputs()
+        if len(outputs) != 1 or not isinstance(outputs[0], AuthoringResult):
+            raise RuntimeError(f"Authoring workflow returned unexpected outputs: {outputs!r}")
+        return outputs[0]
 
     async def _persist_report(self, report: E2ETestReport) -> E2ETestReport:
         run_dir = self.resources.run_dir
@@ -298,6 +350,46 @@ async def execute(
 ) -> E2ETestReport:
     async with E2ETestRuntime(settings, request) as runtime:
         return await runtime.run(resume_plan=resume_plan)
+
+
+async def execute_authoring(settings: Settings, request: E2ETestRequest) -> AuthoringResult:
+    async with E2ETestRuntime(settings, request) as runtime:
+        return await runtime.run_authoring()
+
+
+async def execute_regression_diagnostic(
+    settings: Settings,
+    trial: TrialRunResult,
+    *,
+    target_url: str,
+    allowed_origins: list[str] | None = None,
+) -> RegressionFailureDiagnostic:
+    resources = RuntimeResources(
+        settings,
+        f"failure-{trial.run_id}",
+        target_url=target_url,
+        request_allowed_origins=allowed_origins,
+    )
+    try:
+        await resources.start()
+        if settings.codeact_mode == "required" and resources.codeact_error is not None:
+            raise resources.codeact_error
+        _, browser_tools = resources._workflow_tools()
+        workflow = build_regression_analysis_workflow(
+            resources.agents.browser,
+            tools=browser_tools,
+            structured_retries=settings.structured_output_retries,
+            use_native_response_format=resources.backend.use_native_response_format,
+        )
+        result = await workflow.run(
+            RegressionDiagnosticRequest(target_url=target_url, trial=trial)
+        )
+        outputs = result.get_outputs()
+        if len(outputs) != 1 or not isinstance(outputs[0], RegressionFailureDiagnostic):
+            raise RuntimeError(f"Failure analysis returned unexpected outputs: {outputs!r}")
+        return outputs[0]
+    finally:
+        await resources.close()
 
 
 def _agent_config_dir(configured: Path) -> Path:

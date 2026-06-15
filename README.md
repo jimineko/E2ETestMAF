@@ -12,6 +12,61 @@ Orchestrator -> Discovery -> Generator -> Browser(MCP)
                                       -> Safety --+-> Decision -> retry / complete / escalate
 ```
 
+## 回帰テスト資産ワークフロー
+
+従来の単発自律実行に加え、構造化仕様、決定論的TypeScript生成、標準Playwright
+Runnerによる試行、シナリオ承認、正式保存、Agent非依存の回帰実行を利用できます。
+
+```text
+MAF + CodeActによる探索
+  -> 構造化仕様
+  -> 決定論的Playwrightコード生成
+  -> format / lint / type-check / test discovery
+  -> 標準Playwright Runnerによる試行
+  -> approve / request-changes / reject
+  -> e2e/**へpublish
+  -> Agent非依存regression
+  -> 失敗時だけ診断・限定修復・Pull Request
+```
+
+Draftは対象リポジトリの `.maf-e2e/drafts/<scenario-id>/` に保存されます。承認時と
+Publish時には仕様とコードのSHA-256を再計算し、試行済みコードと一致しない場合は拒否します。
+
+```bash
+uv run maf-e2e author \
+  --target-repo /path/to/app \
+  --target-url http://localhost:3000 \
+  --objective "未認証状態でログイン画面が表示されること" \
+  --expected-result "ログイン見出しと入力欄が表示される"
+
+uv run maf-e2e review --target-repo /path/to/app
+uv run maf-e2e approve --target-repo /path/to/app \
+  --scenario-id login-page-1234567890 --reviewer user@example.com
+uv run maf-e2e publish --target-repo /path/to/app \
+  --scenario-id login-page-1234567890
+uv run maf-e2e regression --target-repo /path/to/app --environment staging
+```
+
+`regression` はモデルProvider、Agent認証、CodeActを必要としません。対象環境は
+`local`、`development`、`staging` のみで、productionは受け付けません。
+
+回帰失敗は保存済みTrial結果から分類できます。`TEST_MAINTENANCE` に分類された場合だけ、
+期待結果を変更しないコード修復とPull Request作成へ進めます。
+
+```bash
+uv run maf-e2e analyze-failure --trial-result /path/to/trial-result.json
+uv run maf-e2e analyze-failure --trial-result /path/to/trial-result.json \
+  --investigate --target-url https://staging.example.com
+uv run maf-e2e repair --target-repo /path/to/app \
+  --scenario-id login-page-1234567890 \
+  --analysis /path/to/failure-analysis.json \
+  --diagnostic /path/to/regression-diagnostic.json \
+  --create-pr
+```
+
+`repair` は `--diagnostic` のLocator候補からコードを再生成するほか、レビュー済みの
+`--proposed-code` を直接検証することもできます。どちらも承認済み仕様と期待結果を変更できません。
+
 - MAF `WorkflowBuilder` による型付きデータフロー
 - `agents/*.yaml` と `AgentFactory(safe_mode=True)` による宣言型Agent
 - Discovery/Generatorへ接続できる参照専用Agent Skills
@@ -68,7 +123,7 @@ Python環境を直接使う方法は、実装・単体テスト向けです。
 uv python install
 uv sync --all-extras --group dev
 npm ci
-npx playwright install chrome
+npx playwright install chrome chromium
 uv run maf-e2e
 ```
 

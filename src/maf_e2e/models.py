@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
+from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -29,6 +30,16 @@ class E2ETestRequest(BaseModel):
     objective: str
     policies: list[str] = Field(default_factory=list)
     max_refinements: int = Field(default=2, ge=0, le=5)
+    expected_results: list[str] = Field(default_factory=list)
+    preconditions: list[str] = Field(default_factory=list)
+    test_data: dict[str, Any] = Field(default_factory=dict)
+    business_context: str = ""
+    prohibited_actions: list[str] = Field(default_factory=list)
+    allowed_origins: list[str] = Field(default_factory=list)
+    max_scenarios: int = Field(default=5, ge=1, le=20)
+    max_steps: int = Field(default=20, ge=1, le=100)
+    target_repository_root: Path | None = None
+    max_trial_repairs: int = Field(default=2, ge=0, le=5)
 
     @field_validator("target_url")
     @classmethod

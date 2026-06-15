@@ -6,6 +6,8 @@ from typing import Annotated, Literal, Self
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+from maf_e2e.domain.regression import TargetEnvironment
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -42,6 +44,14 @@ class Settings(BaseSettings):
     objective: str = "Validate the critical user journey and report regressions."
     policies: list[str] = Field(default_factory=list)
     max_refinements: int = Field(default=2, ge=0, le=5)
+    authoring_timeout_seconds: int = Field(default=120, ge=10, le=3600)
+    trial_timeout_seconds: int = Field(default=300, ge=10, le=7200)
+    regression_timeout_seconds: int = Field(default=600, ge=10, le=14_400)
+    max_trial_repairs: int = Field(default=2, ge=0, le=5)
+    draft_retention_days: int = Field(default=30, ge=1, le=3650)
+    github_repository: str | None = None
+    github_base_branch: str = "main"
+    repair_branch_prefix: str = "agent/e2e-repair"
     agent_config_dir: Path = Path("agents")
     skill_paths: Annotated[list[Path], NoDecode] = Field(default_factory=list)
     model_retries: int = Field(default=2, ge=0, le=5)
@@ -184,3 +194,18 @@ class Settings(BaseSettings):
 
 def _has_secret(value: SecretStr | None) -> bool:
     return bool(value and value.get_secret_value().strip())
+
+
+class OperationalSettings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        env_prefix="MAF_E2E_",
+        extra="ignore",
+    )
+
+    regression_timeout_seconds: int = Field(default=600, ge=10, le=14_400)
+    trial_timeout_seconds: int = Field(default=300, ge=10, le=7200)
+    github_base_branch: str = "main"
+    repair_branch_prefix: str = "agent/e2e-repair"
+    target_environment: TargetEnvironment = TargetEnvironment.LOCAL

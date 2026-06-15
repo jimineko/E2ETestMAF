@@ -15,7 +15,7 @@ WORKDIR /app
 
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
-RUN npx playwright install --with-deps chrome
+RUN npx playwright install --with-deps chrome chromium
 
 COPY pyproject.toml uv.lock README.md ./
 COPY src ./src

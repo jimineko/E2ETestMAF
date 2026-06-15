@@ -12,4 +12,4 @@ checkpoints/*
 !checkpoints/.gitkeep
 auth/*.json
 !auth/.gitkeep
-
+.maf-e2e/

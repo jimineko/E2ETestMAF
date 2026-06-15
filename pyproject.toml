@@ -56,6 +56,7 @@ packages = ["src/maf_e2e"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "agents" = "maf_e2e/agent_definitions"
+"templates/github-actions/e2e-nightly.yml" = "maf_e2e/templates/github-actions/e2e-nightly.yml"
 
 [tool.uv]
 prerelease = "allow"
