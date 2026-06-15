@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "maf-playwright-e2e"
 version = "0.1.0"
-description = "Autonomous web E2E testing built with Microsoft Agent Framework and Playwright MCP"
+description = "Agent-assisted lifecycle for reviewed, deterministic Playwright regression tests"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
 dependencies = [

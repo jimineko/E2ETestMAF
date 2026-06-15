@@ -1,374 +1,194 @@
-# MAF + Playwright MCP Autonomous E2E Testing
+# E2ETestMAF
 
-Microsoft Agent Framework (MAF) と Microsoft公式 Playwright MCP を使い、Webアプリケーションの探索、テスト生成、ブラウザ実行、判定、再試行、レポート作成を行う、型付きの自律型E2Eテスト製品です。Agent backendは Azure OpenAI / Google Gemini / Vertex AI / GitHub Copilot CLI / OpenAI Codex CLI を選択できます。Codex CLI以外はMAF標準プロバイダーを直接利用します。
+[日本語](README.ja.md)
 
-旧 `maf_qa` Python API、`maf-qa` CLI、`MAF_QA_*` 環境変数との互換性はありません。保存済みの `autonomous-web-qa-v2` チェックポイントも再開できないため、新しい `maf_e2e` API、`maf-e2e` CLI、`MAF_E2E_*` 環境変数で実行し直してください。
+E2ETestMAF turns natural-language test requests into reviewed, versioned Playwright tests, then runs approved tests without an LLM in the browser execution path.
 
-## 実装したフロー
+> **Project status: Experimental (0.1.0).** APIs and stored asset formats may change before the first stable release.
 
-```text
-Orchestrator -> Discovery -> Generator -> Browser(MCP)
-                                      -> Judge  --+
-                                      -> Safety --+-> Decision -> retry / complete / escalate
+## Why E2ETestMAF?
+
+AI agents are useful for exploring an unfamiliar web application, but an agent driving a browser on every scheduled run is difficult to review and reproduce. Hand-writing and maintaining every Playwright test is reliable, but expensive.
+
+E2ETestMAF separates those concerns:
+
+- an Agent and Playwright MCP explore the application and diagnose failures;
+- a deterministic generator creates TypeScript for `@playwright/test`;
+- the standard Playwright runner executes the generated code before approval;
+- a human approves the specification, source code, and trial evidence;
+- CI runs the approved code without an Agent, LLM, MCP server, or model credentials.
+
+## Key Features
+
+- Generate structured test specifications and Playwright TypeScript from a natural-language objective.
+- Validate generated code with the target repository's formatter, linter, TypeScript compiler, and Playwright discovery.
+- Capture JSON, JUnit, HTML, screenshots, traces, console errors, and network errors during trial runs.
+- Approve scenarios by specification and source SHA-256 hashes.
+- Publish approved assets only to `e2e/generated`, `e2e/specs`, and `e2e/metadata`.
+- Run active regression tests with the standard Playwright runner and no Agent credentials.
+- Classify failures and propose bounded test-maintenance repairs without changing expected results.
+- Create a repair branch, commit, push, and pull request; automatic merge is never performed.
+
+## Quick Start
+
+### Prerequisites
+
+- Python 3.13
+- [uv](https://docs.astral.sh/uv/)
+- Node.js 22 and npm (the CI baseline)
+- Chrome or Chromium
+- A target repository with `package.json`, local Prettier, TypeScript, and `@playwright/test`, plus either a lint script or local ESLint
+- One supported Agent provider for authoring; regression runs do not need one
+
+Install E2ETestMAF from this checkout:
+
+```bash
+git clone https://github.com/jimineko/E2ETestMAF.git
+cd E2ETestMAF
+uv sync --group dev
+npm ci
+npx playwright install chrome chromium
 ```
 
-## 回帰テスト資産ワークフロー
+Configure an Agent provider. This minimal example uses the Gemini Developer API:
 
-従来の単発自律実行に加え、構造化仕様、決定論的TypeScript生成、標準Playwright
-Runnerによる試行、シナリオ承認、正式保存、Agent非依存の回帰実行を利用できます。
-
-```text
-MAF + CodeActによる探索
-  -> 構造化仕様
-  -> 決定論的Playwrightコード生成
-  -> format / lint / type-check / test discovery
-  -> 標準Playwright Runnerによる試行
-  -> approve / request-changes / reject
-  -> e2e/**へpublish
-  -> Agent非依存regression
-  -> 失敗時だけ診断・限定修復・Pull Request
+```bash
+export MAF_E2E_MODEL_PROVIDER=gemini
+export MAF_E2E_MODEL_AUTH=api_key
+export MAF_E2E_GEMINI_API_KEY=YOUR_API_KEY
+export MAF_E2E_GEMINI_MODEL=gemini-2.5-flash-lite
 ```
 
-Draftは対象リポジトリの `.maf-e2e/drafts/<scenario-id>/` に保存されます。承認時と
-Publish時には仕様とコードのSHA-256を再計算し、試行済みコードと一致しない場合は拒否します。
+Create and trial a draft in the target application repository:
 
 ```bash
 uv run maf-e2e author \
-  --target-repo /path/to/app \
+  --target-repo /path/to/web-app \
   --target-url http://localhost:3000 \
-  --objective "未認証状態でログイン画面が表示されること" \
-  --expected-result "ログイン見出しと入力欄が表示される"
-
-uv run maf-e2e review --target-repo /path/to/app
-uv run maf-e2e approve --target-repo /path/to/app \
-  --scenario-id login-page-1234567890 --reviewer user@example.com
-uv run maf-e2e publish --target-repo /path/to/app \
-  --scenario-id login-page-1234567890
-uv run maf-e2e regression --target-repo /path/to/app --environment staging
+  --objective "An unauthenticated user can open the login page" \
+  --expected-result "The login heading, email field, and password field are visible"
 ```
 
-`regression` はモデルProvider、Agent認証、CodeActを必要としません。対象環境は
-`local`、`development`、`staging` のみで、productionは受け付けません。
-
-回帰失敗は保存済みTrial結果から分類できます。`TEST_MAINTENANCE` に分類された場合だけ、
-期待結果を変更しないコード修復とPull Request作成へ進めます。
+The command writes each generated scenario to `/path/to/web-app/.maf-e2e/drafts/<scenario-id>/`. Review the specification, source, and trial evidence, then approve and publish it:
 
 ```bash
-uv run maf-e2e analyze-failure --trial-result /path/to/trial-result.json
-uv run maf-e2e analyze-failure --trial-result /path/to/trial-result.json \
-  --investigate --target-url https://staging.example.com
-uv run maf-e2e repair --target-repo /path/to/app \
-  --scenario-id login-page-1234567890 \
-  --analysis /path/to/failure-analysis.json \
-  --diagnostic /path/to/regression-diagnostic.json \
-  --create-pr
+uv run maf-e2e review \
+  --target-repo /path/to/web-app \
+  --scenario-id <scenario-id>
+
+uv run maf-e2e approve \
+  --target-repo /path/to/web-app \
+  --scenario-id <scenario-id> \
+  --reviewer you@example.com
+
+uv run maf-e2e publish \
+  --target-repo /path/to/web-app \
+  --scenario-id <scenario-id>
 ```
 
-`repair` は `--diagnostic` のLocator候補からコードを再生成するほか、レビュー済みの
-`--proposed-code` を直接検証することもできます。どちらも承認済み仕様と期待結果を変更できません。
-
-- MAF `WorkflowBuilder` による型付きデータフロー
-- `agents/*.yaml` と `AgentFactory(safe_mode=True)` による宣言型Agent
-- Discovery/Generatorへ接続できる参照専用Agent Skills
-- モデルAPIの限定retry、構造化出力repair、Playwright非自動retry
-- run単位に分離した `AgentSession` とファイルチェックポイント
-- Safety high/critical・stage障害のBLOCKED化とDevUI HITL
-- Playwright操作を `MCPStdioTool` + `@playwright/mcp` に限定
-- Discovery/Browserを `HyperlightCodeActProvider` でCodeAct化
-- Hyperlight micro-VM内から監査付きPlaywright MCP関数を一括呼び出し
-- RAMPARTによる隔離済みXPIA/behavioral安全性回帰テスト
-- `storageState` の再利用、`devtools` capabilityによるtrace開始/停止、成果物ZIP化
-- Azure OpenAIのManaged Identity認証
-- Gemini Developer APIのAPIキー認証、Vertex AIのADC認証
-- GitHub Copilot CLIのサブスクリプション認証を使うMAF Agent
-- ChatGPTサブスクリプション認証を再利用するCodex CLI AgentとMAF tool bridge
-- Blob Storageへの成果物アップロード
-- OpenTelemetryのOTLP/Application Insights出力
-- macOS/Linux/Windows WSL2共通のDocker Compose実行経路とAzure VM用Bicep
-
-## 重要な設計補正
-
-2026年6月14日時点の正式PyPI名は `microsoft-agent-framework` ではなく `agent-framework` です。本リポジトリは `agent-framework-core==1.8.1`、`agent-framework-hyperlight==1.0.0b260521`、`rampart==0.1.0` を固定します。Hyperlight integrationはbeta、RAMPARTはalpha、Agent SkillsとHarness APIはexperimentalです。更新時は単体・Linux KVM統合・RAMPART試験をすべて通してください。
-
-DiscoveryとBrowserは、対応環境ではMAF `HyperlightCodeActProvider`から公開される`execute_code`だけをモデルへ渡します。生成PythonはASTポリシーで検査され、Hyperlight内の`call_tool(...)`から許可済みPlaywright MCP関数を呼び出します。VM内ネットワークとホストファイルmountは無効です。RAMPARTの能動攻撃は通常のE2Eテスト実行には混ぜず、管理下fixtureまたは明示allowlist済みstagingだけを対象にします。
-
-### Hyperlight実行条件
-
-- Python 3.13
-- Linux x86_64、glibc 2.34以上
-- `/dev/kvm`を読み書きできること
-- コンテナには`--device=/dev/kvm:/dev/kvm`だけを渡し、privilegedにしないこと
-
-macOS arm64ではHyperlight自体とKVMを使用できません。Docker Compose内のLinux amd64コンテナでE2Eテストは実行できますが、`MAF_E2E_CODEACT_MODE=auto`により監査付き直接MCP経路へ明示的に切り替わります。`required`では起動を拒否します。本番とLinux KVM統合試験は`required`を使用します。
-
-## ローカル実行
-
-デフォルトの実行方法はDocker Composeです。
+Run all active scenarios. This command does not load Agent settings or require model credentials:
 
 ```bash
-cp .env.example .env
-./scripts/e2e-compose
+uv run maf-e2e regression \
+  --target-repo /path/to/web-app \
+  --environment staging
 ```
 
-対象アプリがホストのlocalhostで動いている場合、`.env`では`localhost`ではなく`host.docker.internal`を指定します。
+## How It Works
 
-```dotenv
-MAF_E2E_TARGET_URL=http://host.docker.internal:3000
-MAF_E2E_PLAYWRIGHT_ALLOWED_ORIGINS=http://host.docker.internal:3000
+```mermaid
+flowchart LR
+    A["Natural-language request"] --> B["Agent discovery<br/>CodeAct + Playwright MCP"]
+    B --> C["Structured specification"]
+    C --> D["Deterministic<br/>TypeScript generation"]
+    D --> E["Static validation"]
+    E --> F["Trial<br/>Playwright runner"]
+    F --> G{"Human review"}
+    G -->|Approve| H["Publish versioned assets"]
+    G -->|Request changes| B
+    G -->|Reject| I["Audit archive"]
+    H --> J["Regression<br/>Playwright runner only"]
+    J -->|Failure| K["Optional Agent diagnosis<br/>and repair proposal"]
 ```
 
-Python環境を直接使う方法は、実装・単体テスト向けです。
+The approval boundary is deliberate: the TypeScript source that passes the trial is hashed, reviewed, and published. Direct browser actions performed during discovery or diagnosis cannot become an approved regression test by themselves.
+
+## CLI Overview
+
+| Stage | Command | Purpose |
+|---|---|---|
+| Author | `author` | Explore the application, generate assets, validate them, and run a trial |
+| Review | `review` | Print the specification, generated source, metadata, and trial result |
+| Review | `approve` | Approve the exact specification and source hashes |
+| Review | `request-changes` | Return a scenario for another authoring pass |
+| Review | `reject` | Remove the draft and retain an audit copy under `.maf-e2e/rejected` |
+| Publish | `publish` | Copy an approved scenario into the target repository's `e2e/**` tree |
+| Run | `regression` | Execute active scenarios without an Agent |
+| Maintain | `analyze-failure` | Classify saved failure evidence, optionally with a new Agent investigation |
+| Maintain | `repair` | Validate a bounded code repair and optionally open a GitHub pull request |
+
+See the [CLI reference](docs/cli.md) for options, examples, and exit codes.
+
+## Generated Assets
+
+Drafts stay outside the formal test suite until approval:
+
+```text
+.maf-e2e/
+  drafts/<scenario-id>/        specification, generated code, metadata, trial evidence
+  rejected/                    rejected draft audit records
+  regression/<run-id>/         regression reports and Playwright artifacts
+
+e2e/
+  generated/<feature>/         approved Playwright TypeScript
+  specs/<feature>/             versioned structured specifications
+  metadata/<feature>/          active asset metadata and hashes
+```
+
+Publishing re-computes both hashes and fails if the approved specification or source has changed.
+
+## Safety Guarantees
+
+- `regression` loads only active metadata and executes fixed Playwright TypeScript.
+- `production` is not an accepted target environment; use `local`, `development`, or `staging`.
+- Published paths are constrained to the target repository's `e2e` directory.
+- Discovery is origin-scoped, file upload is disabled by default, and destructive actions are denied by default.
+- Repairs are limited to test maintenance such as locators and Playwright interaction details.
+- A changed expected result or scenario meaning requires a new specification version and human approval.
+- Repair pull requests are never merged automatically.
+
+Read [Security and execution boundaries](docs/security.md) for CodeAct, Hyperlight, and RAMPART details.
+
+## Requirements and Limitations
+
+The MVP supports Chromium-based tests, TypeScript, GitHub repair pull requests, and Playwright `storageState` authentication. Authoring supports Azure OpenAI, Gemini, Vertex AI, GitHub Copilot CLI, and Codex CLI.
+
+The MVP does not support production targets, visual regression, multiple-browser matrices, a management UI, automatic expected-result changes, or automatic pull-request merge. Hyperlight isolation requires Linux x86_64 and KVM; other local environments can use the audited direct-MCP fallback described in the [configuration guide](docs/configuration.md).
+
+## Documentation
+
+- [Configuration and Agent providers](docs/configuration.md)
+- [CLI reference](docs/cli.md)
+- [Artifacts and asset lifecycle](docs/artifacts.md)
+- [Security and execution boundaries](docs/security.md)
+- [Docker, CI, and Azure deployment](docs/deployment.md)
+- [Development guide](docs/development.md)
+- [Legacy workflow and migration](docs/migration.md)
+- [Product requirements](docs/E2ETestMAF_requirements.md) (Japanese)
+- [Implementation status](docs/E2ETestMAF_implementation_status.md) (Japanese)
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). The standard local checks are:
 
 ```bash
-uv python install
-uv sync --all-extras --group dev
-npm ci
-npx playwright install chrome chromium
-uv run maf-e2e
-```
-
-GitHub Copilot CLIまたはCodex CLIを使う場合はローカルPython実行を使用します。これらのbackendはDocker／Azureでは拒否され、APIキーへフォールバックしません。
-
-ローカル環境は `venv + pip` ではなく `uv` 管理に統一しています。`.python-version`
-で指定した Python 3.13 系の仮想環境を `uv sync` で作成し、Python 依存関係は
-`pyproject.toml` を正として解決します。
-
-Azure OpenAIを使う場合は事前に `az login`、Vertex AIのADCを使う場合は `gcloud auth application-default login` を実行します。Gemini Developer APIのAPIキー認証では、どちらのCLIログインも不要です。サブスクリプションbackendでは事前に `copilot` または `codex login` の認証を完了してください。
-
-### 品質チェック
-
-```bash
-uv run ruff check .   # lint
-uv run pytest         # テスト
-uv run mypy           # 型チェック
-```
-
-### 依存管理
-
-```bash
-uv lock --upgrade     # ロックファイルを最新に更新
-uv build              # ホイールビルド（リリース時）
-```
-
-### CI での品質チェック手順
-
-CI プラットフォーム（GitHub Actions / Azure DevOps 等）に依らず、以下のコマンド列を実行します。
-ブラウザインストール・Azure 認証・外部 API 呼び出しは不要です。
-
-```bash
-uv sync --group dev
 uv run ruff check .
-uv run pytest
 uv run mypy
+uv run pytest
 ```
 
-### Agent設定とSkills
+Security reports should follow [SECURITY.md](SECURITY.md).
 
-5エージェントの名前、説明、instructions、モデルオプションは `agents/*.yaml` で管理します。provider、認証、tools、MCP、output schema、PowerFx式はYAMLから指定できません。
-Discoveryは `next_step_hints`、Generatorは `execution_notes` と `handoff_hints`、Browserは `follow_up_hints` を返し、各段階の次の手が伝わるようにします。
+## License
 
-Discovery/BrowserのCodeAct設定:
-
-```dotenv
-MAF_E2E_CODEACT_MODE=auto              # required | auto | disabled
-MAF_E2E_CODEACT_MAX_CODE_BYTES=32768
-MAF_E2E_CODEACT_MAX_INVOCATIONS=6
-MAF_E2E_CODEACT_REQUIRE_KVM=true
-MAF_E2E_CODEACT_ALLOW_FILE_UPLOAD=false
-MAF_E2E_CODEACT_ALLOW_DESTRUCTIVE_ACTIONS=false
-MAF_E2E_COMPOSE_KVM=auto               # auto | required | disabled
-MAF_E2E_COMPOSE_HEADLESS=true           # Docker内のPlaywrightは既定でheadless
-```
-
-`required`でpreflightに失敗した場合、直接MCPへfallbackせず構成障害としてBLOCKEDになります。`auto`のfallbackはローカル開発用です。
-
-チェックポイントから再開する場合は、保存済みplanを読み込み、新しいMCP接続とHyperlight SandboxでBrowserステージを先頭から再実行します。
-
-```bash
-uv run maf-e2e --resume-run-id RUN_ID
-uv run maf-e2e --resume-run-id RUN_ID --checkpoint-id CHECKPOINT_ID
-```
-
-対象アプリ固有の操作規約は、`SKILL.md` と `references/` だけを含むSkillとして作成し、`MAF_E2E_SKILL_PATHS`へカンマ区切りで指定します。`scripts/` を含むSkillは起動時に拒否されます。
-
-### DevUI
-
-DevUIはローカル調査専用です。Bearer認証付きでloopbackへ起動し、既定ではプロンプトや応答本文をOpenTelemetryへ記録しません。
-
-```bash
-uv sync --extra devui --group dev
-MAF_E2E_DEVUI_AUTH_TOKEN=change-me uv run maf-e2e-devui
-```
-
-DevUIでESCALATEした実行は人間の `retry` または `abort` 応答まで停止します。本番のVM batchでは同じ状態を`blocked`レポートと終了コード3へ変換します。
-
-### モデルプロバイダー
-
-モデル通信は`MAF_E2E_MODEL_PROVIDER`と`MAF_E2E_MODEL_AUTH`を必ず明示します。対応していない組み合わせや別認証方式へのfallbackは拒否されます。
-
-Azure OpenAIをEntra ID（Azure CLI、Managed Identity、サービスプリンシパル等）で使う場合:
-
-```dotenv
-MAF_E2E_MODEL_PROVIDER=azure_openai
-MAF_E2E_MODEL_AUTH=entra_id
-MAF_E2E_AZURE_OPENAI_ENDPOINT=https://YOUR-RESOURCE.openai.azure.com
-MAF_E2E_AZURE_OPENAI_DEPLOYMENT=gpt-4o
-```
-
-Windows、WSL2、Docker等からAzure OpenAI API Keyを使う場合:
-
-```dotenv
-MAF_E2E_MODEL_PROVIDER=azure_openai
-MAF_E2E_MODEL_AUTH=api_key
-MAF_E2E_AZURE_OPENAI_ENDPOINT=https://YOUR-RESOURCE.openai.azure.com
-MAF_E2E_AZURE_OPENAI_DEPLOYMENT=gpt-4o
-MAF_E2E_AZURE_OPENAI_API_KEY=YOUR_API_KEY
-```
-
-Gemini Developer APIを使う場合:
-
-```dotenv
-MAF_E2E_MODEL_PROVIDER=gemini
-MAF_E2E_MODEL_AUTH=api_key
-MAF_E2E_GEMINI_API_KEY=YOUR_API_KEY
-MAF_E2E_GEMINI_MODEL=gemini-2.5-flash-lite
-```
-
-GitHub Copilot CLIを使う場合は、Copilot CLIへログインした同じOSユーザーで次を実行します。旧API token方式は使用しません。
-
-```dotenv
-MAF_E2E_MODEL_PROVIDER=github_copilot
-MAF_E2E_MODEL_AUTH=subscription
-MAF_E2E_RUNTIME_ENVIRONMENT=local
-MAF_E2E_GITHUB_COPILOT_CLI_PATH=copilot
-MAF_E2E_GITHUB_COPILOT_MODEL=
-MAF_E2E_GITHUB_COPILOT_TIMEOUT_SECONDS=300
-```
-
-Codex CLIを使う場合は、`codex login`でChatGPTへログインした同じOSユーザーで次を設定します。Codexはread-only sandboxで動作し、ブラウザ操作はMAFから渡された監査付きtoolだけを利用します。
-
-```dotenv
-MAF_E2E_MODEL_PROVIDER=codex_cli
-MAF_E2E_MODEL_AUTH=subscription
-MAF_E2E_RUNTIME_ENVIRONMENT=local
-MAF_E2E_CODEX_CLI_PATH=codex
-MAF_E2E_CODEX_MODEL=
-MAF_E2E_CODEX_TIMEOUT_SECONDS=300
-MAF_E2E_CODEX_MAX_TOOL_ROUNDS=8
-```
-
-CLI backendの導入と認証確認:
-
-```bash
-uv sync --extra cli-providers --group dev
-copilot --version
-codex login status
-```
-
-Copilot／ChatGPTの契約上限と利用条件は各サービスに従います。保存したCodex checkpointは同じユーザーのローカルthreadを再利用し、threadが失われている場合は保存済みtranscriptから再構築します。
-
-Vertex AIをADCで使う場合:
-
-```dotenv
-MAF_E2E_MODEL_PROVIDER=vertex_ai
-MAF_E2E_MODEL_AUTH=adc
-MAF_E2E_GEMINI_MODEL=gemini-2.5-flash-lite
-MAF_E2E_GEMINI_VERTEX_PROJECT=YOUR_PROJECT_ID
-MAF_E2E_GEMINI_VERTEX_LOCATION=global
-```
-
-Vertex AI Express Mode等のAPI Keyを使う場合は`MODEL_AUTH=api_key`と`MAF_E2E_GEMINI_API_KEY`を指定します。
-
-CLI引数でも対象を指定できます。
-
-```bash
-uv run maf-e2e \
-  --model-provider gemini \
-  --model-auth api_key \
-  --target-url https://example.com \
-  --objective "主要導線を検証する" \
-  --policy "コンソールに未処理エラーがない"
-```
-
-`--model-provider`は `azure_openai`、`gemini`、`vertex_ai`、`github_copilot`、`codex_cli`、`--model-auth`は`api_key`、`entra_id`、`adc`、`subscription`を受け付けます。
-
-認証済み状態を再利用する場合は `auth/user.json` を配置します。このファイルはGit管理されません。
-
-## Docker
-
-```bash
-./scripts/e2e-compose
-./scripts/e2e-compose --target-url https://example.com
-```
-
-ランチャーはDockerを起動し、ホストとDocker daemonの両方から`/dev/kvm`を利用できるか検査します。成功時だけ`docker-compose.kvm.yml`を自動適用し、`e2e`コンテナへKVM deviceだけを渡します。privilegedモードは使用しません。利用できない場合はmacOSを含め`auto`の直接MCP経路で実行します。実行中はDocker管理のnamed volumeを使い、終了時に`artifacts/`と`checkpoints/`へ成果物を同期します。
-
-KVMを必須にして、利用できなければ実行前に失敗させる場合:
-
-```bash
-MAF_E2E_CODEACT_MODE=required MAF_E2E_COMPOSE_KVM=required ./scripts/e2e-compose
-```
-
-### macOS
-
-Docker Desktopを起動して`./scripts/e2e-compose`を実行します。Apple Siliconでも`linux/amd64`コンテナを使用するため動作しますが、CPUエミュレーションの分だけ遅くなります。HyperlightはmacOSのHypervisor.frameworkに未対応で、Docker Desktop越しにKVMを利用することもできないため、CodeActではなく直接MCP経路になります。
-
-コンテナは非rootユーザーで実行し、Linux capabilityをすべて削除します。Chromium sandboxが必要とするuser namespaceを許可するためComposeではseccompを解除していますが、privilegedモードは使用しません。
-
-### Windows WSL2
-
-リポジトリとコマンド実行環境をWSL2側へ置き、WSL2のbashから`./scripts/e2e-compose`を実行します。通常のE2EテストはKVMなしでも動作します。実Hyperlightを使うにはWindows 11のnested virtualization、KVM対応WSL2 kernel、読み書き可能な`/dev/kvm`、および同じWSL2 distro内で動作するDocker Engineが必要です。
-
-Azure OpenAI API Keyを使う場合は`.env`へ`MAF_E2E_MODEL_PROVIDER=azure_openai`、`MAF_E2E_MODEL_AUTH=api_key`、endpoint、deployment、API keyを設定します。Composeの`env_file`からコンテナへ渡されるため、Windows側の`az login`は不要です。
-
-必要に応じて`%UserProfile%\.wslconfig`でnested virtualizationを明示します。Windows 11では既定値も`true`です。
-
-```ini
-[wsl2]
-nestedVirtualization=true
-```
-
-```powershell
-wsl --update
-wsl --list --verbose
-wsl --shutdown
-```
-
-```bash
-test -c /dev/kvm && test -r /dev/kvm && test -w /dev/kvm
-docker info
-MAF_E2E_CODEACT_MODE=required MAF_E2E_COMPOSE_KVM=required ./scripts/e2e-compose
-```
-
-Docker DesktopのWSL2 custom kernel利用は公式サポート外です。Docker Desktop側daemonへ`/dev/kvm`を渡せない構成では、ランチャーが検出して直接MCPへ切り替えます。
-
-## Azure
-
-1. `infra/main.bicepparam.example` をコピーし、SSH公開鍵を含む値を設定します。
-2. Bicepをデプロイします。
-3. 出力されたACRへlinux/amd64の`maf-playwright-e2e:latest`をpushします。
-4. KVM対応VM上の`maf-e2e.timer`を待つか、`systemctl start maf-e2e.service`で起動します。
-
-```bash
-az deployment group create \
-  --resource-group YOUR_RG \
-  --parameters infra/main.bicepparam
-```
-
-VMには公開IPを付与せず、NAT Gateway経由の外向き通信だけを許可します。既定のsystemd timerはUTC 18:00、日本時間03:00です。コンテナへは`/dev/kvm`だけを渡します。
-
-## RAMPART
-
-RAMPART試験は通常の`pytest`から分離して実行します。5試行中80%以上SAFEをゲートとし、結果は`artifacts/rampart/`と、設定時はBlob Storageの`rampart/`以下へ保存します。
-
-```bash
-MAF_E2E_CODEACT_MODE=required \
-MAF_E2E_RAMPART_TARGET_URL=http://127.0.0.1:8765 \
-uv run pytest tests/rampart -v
-```
-
-`.github/workflows/hyperlight-rampart.yml`はLinux KVM上で管理下fixtureを起動し、夜間または手動で安全性試験を実施します。任意の本番URLを指定して実行してはいけません。
-
-## 成果物
-
-各実行は `artifacts/<run_id>/` にPlaywright出力と `report.json` を保存し、同階層にZIPを作成します。`MAF_E2E_BLOB_ACCOUNT_URL` が設定されている場合はManaged IdentityでBlobへアップロードします。
+This repository does not currently include a license. Until a license is added, no open-source license is granted for use, modification, or redistribution.
