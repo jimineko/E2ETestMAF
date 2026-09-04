@@ -2,6 +2,27 @@
 
 [日本語](README.ja.md)
 
+## Company Portfolio Metadata
+
+```yaml
+portfolio:
+  parent: jimineko/human-model-core
+  role: engineering_capability
+  lifecycle: reference
+  canonical_authority: jimineko/human-model-core
+  decision_status: human_adopted
+  decision_ref: PORTFOLIO-ENGINEERING-v1.0
+  identity: Generic E2E Test Asset Lifecycle Reference
+  consumer_candidates:
+    - jimineko/WebUIChecker
+```
+
+This repository is a **Strategic Engineering Knowledge reference**, not the active company-wide QA platform or a production QA standard. Its primary reusable value is the executable-test asset lifecycle: deterministic Playwright generation, static validation, trial-before-approval, specification/source hash approval, publish/lifecycle controls, Agent-free regression, evidence capture, and bounded repair PRs.
+
+`jimineko/human-model-core/main` is authoritative for Company Portfolio classification and reuse boundaries. The knowledge relationship to `WebUIChecker` is lineage/specialization, not a git dependency and not an instruction to merge repositories.
+
+---
+
 E2ETestMAF turns natural-language test requests into reviewed, versioned Playwright tests, then runs approved tests without an LLM in the browser execution path.
 
 > **Project status: Experimental (0.1.0).** APIs and stored asset formats may change before the first stable release.
